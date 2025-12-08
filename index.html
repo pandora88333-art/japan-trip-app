@@ -1,548 +1,765 @@
-<!DOCTYPE html>
-<html lang="zh-TW">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>雪國之旅 ❄️</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
-        import { getFirestore, collection, doc, onSnapshot, setDoc, updateDoc, deleteDoc, writeBatch } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
-        window.fb = { initializeApp, getAuth, signInAnonymously, onAuthStateChanged, getFirestore, collection, doc, onSnapshot, setDoc, updateDoc, deleteDoc, writeBatch };
-    </script>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&family=Rubik:wght@300;400;500;700&display=swap');
-        body { font-family: 'Rubik', 'Noto Sans TC', sans-serif; -webkit-tap-highlight-color: transparent; user-select: none; }
-        .no-scrollbar::-webkit-scrollbar { display: none; }
-        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-        .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
-        /* Animations */
-        .slide-in-right { animation: slideRight 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards; }
-        @keyframes slideRight { from { transform: translateX(100%); } to { transform: translateX(0); } }
-        .slide-up-sheet { animation: slideUp 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards; }
-        @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
-        /* Visual Styles */
-        .glass-card { background: rgba(255, 255, 255, 0.75); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.6); }
-        .bg-snow-theme { background-image: url('https://images.unsplash.com/photo-1530545124313-ce5e10642199?q=80&w=1974&auto=format&fit=crop'); background-size: cover; background-position: center; background-attachment: fixed; }
-        .q-calendar-shadow { box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06), inset 0 -2px 4px rgba(0,0,0,0.05); }
-    </style>
-</head>
-<body>
-    <div id="root"></div>
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
+import { getFirestore, collection, doc, setDoc, onSnapshot, deleteDoc, updateDoc, query, orderBy, serverTimestamp, writeBatch } from 'firebase/firestore';
+import { 
+  Plane, Train, MapPin, Utensils, Bed, 
+  Plus, Trash2, Edit2, Check, X, 
+  Snowflake, Calendar, CloudSnow, Sun, CloudRain,
+  Users, Wallet, ShoppingBag, ArrowLeft, ExternalLink
+} from 'lucide-react';
 
-    <script type="text/babel" data-type="module">
-        const { useState, useEffect, useMemo, useRef } = React;
+// --- Firebase Configuration ---
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
-        // ==========================================
-        // 🔴 請在此貼上 Firebase 設定碼 (必要!)
-        // ==========================================
-        const firebaseConfig = {
-    apiKey: "AIzaSyCVjGUYcRpHMNwBqSGkodJocffDU-3lCkc",
-    authDomain: "celebrate-leaving-the-job.firebaseapp.com",
-    projectId: "celebrate-leaving-the-job",
-    storageBucket: "celebrate-leaving-the-job.firebasestorage.app",
-    messagingSenderId: "890978169786",
-    appId: "1:890978169786:web:3a4a6a41c29da98c486383",
-    measurementId: "G-41G89KYTBD"
-  };
+// --- Mock Data for Initial State (from PDF) ---
+const INITIAL_ITINERARY = [
+  {
+    day: 1, date: '12/15', location: 'Tokyo',
+    items: [
+      { type: 'flight', title: '去程航班 CI 0106', time: '16:25 - 20:30', location: 'TPE(T2) → NRT(T2)', note: '中華航空' },
+      { type: 'transport', title: 'Skyliner 機場快線', time: '21:00', location: '成田機場 → 京成上野', note: '車程41分鐘，至京成上野站' },
+      { type: 'transport', title: 'JR 山手線', time: '22:00', location: '上野 → 秋葉原', note: '約4分鐘' },
+      { type: 'accommodation', title: 'MYSTAYS 御茶之水', time: '22:30', location: '東京都千代田區神田淡路町2-10-6', note: 'Check-in' },
+    ]
+  },
+  {
+    day: 2, date: '12/16', location: 'Tokyo',
+    items: [
+      { type: 'transport', title: '前往皇居', time: '09:00', location: '御茶之水 → 東京站 → 皇居外苑', note: 'JR中央線 + 步行' },
+      { type: 'attraction', title: '皇居外苑 (二重橋)', time: '09:30', location: '皇居外苑', note: '二重橋前 → 行幸通' },
+      { type: 'food', title: '午餐: 東京一番街', time: '12:00', location: '東京站一番街', note: 'Jump Shop 逛街 +在此午餐' },
+      { type: 'transport', title: '前往淺草', time: '13:30', location: '東京 → 銀座 → 淺草', note: 'Metro丸之內線 + 銀座線' },
+      { type: 'attraction', title: '淺草寺 & 仲見世通', time: '14:00', location: '淺草寺', note: '雷門、文化觀光中心8F觀景台' },
+      { type: 'transport', title: '前往晴空塔', time: '16:30', location: '淺草 → 押上', note: '東武晴空塔線或步行' },
+      { type: 'attraction', title: '東京晴空塔', time: '17:00', location: 'Tokyo Skytree', note: '觀景台預約 15:30 (行程調整), Solamachi 商場' },
+      { type: 'food', title: '晚餐: 呼炉凪来', time: '19:30', location: '炉端とおでん 呼炉凪来 秋葉原店', note: '關東煮吃到飽' },
+      { type: 'attraction', title: '秋葉原逛街', time: '21:00', location: '秋葉原', note: 'Radio Kaikan, Animate' }
+    ]
+  },
+  {
+    day: 3, date: '12/17', location: 'Tokyo',
+    items: [
+      { type: 'transport', title: '前往原宿', time: '09:30', location: '御茶之水 → 代代木 → 原宿', note: 'JR中央線 + 山手線' },
+      { type: 'attraction', title: '原宿 & 表參道', time: '10:00', location: '竹下通', note: 'Kiddy Land, 逛街' },
+      { type: 'transport', title: '步行至澀谷', time: '12:30', location: '表參道 → 澀谷', note: '沿途逛精品街' },
+      { type: 'food', title: '午餐', time: '13:00', location: '澀谷', note: '布丁狗餐廳 / 牡蠣屋 / 蛋包飯' },
+      { type: 'attraction', title: '澀谷 SKY & 逛街', time: '14:20', location: 'Shibuya Sky', note: '預約 14:20, MODI, 十字路口, Donki' },
+      { type: 'transport', title: '前往池袋', time: '17:00', location: '新宿 → 池袋', note: 'JR山手線' },
+      { type: 'food', title: '晚餐: 文字燒', time: '18:00', location: '食べ飲み放題もんじゃ酒場 だしや 池袋東口店', note: '' },
+      { type: 'attraction', title: '池袋逛街', time: '19:30', location: '池袋 Sunshine City', note: 'Animate, Pokémon Center' },
+    ]
+  },
+  {
+    day: 4, date: '12/18', location: 'Yamagata',
+    items: [
+      { type: 'attraction', title: '御茶之水買滑雪用具', time: '09:00', location: '御茶之水樂器/體育用品街', note: '' },
+      { type: 'transport', title: '前往藏王溫泉', time: '11:00', location: '御茶之水 → 東京站 → 山形站 → 藏王溫泉', note: '山形新幹線 Tsubasa (約2.5hr) + 巴士' },
+      { type: 'accommodation', title: '高宮琉璃渡假酒店', time: '16:00', location: 'Zao Onsen Sandogawa 1118-7', note: 'Check-in' },
+    ]
+  },
+  {
+    day: 5, date: '12/19', location: 'Yamagata',
+    items: [
+      { type: 'attraction', title: 'SHIBA SKI 租裝備', time: '09:00', location: 'SHIBA SKI', note: '' },
+      { type: 'attraction', title: '滑雪課 (上午)', time: '11:00 - 13:30', location: '藏王溫泉滑雪場', note: '' },
+      { type: 'food', title: '午餐: Otochaya', time: '13:30', location: 'Otochaya', note: '音茶屋' },
+      { type: 'attraction', title: '滑雪課 (下午)', time: '14:30 - 17:00', location: '藏王溫泉滑雪場', note: '' },
+    ]
+  },
+  {
+    day: 6, date: '12/20', location: 'Sendai',
+    items: [
+      { type: 'transport', title: '前往藏王樹冰', time: '09:00', location: '飯店 → 藏王纜車', note: '步行或飯店接駁' },
+      { type: 'attraction', title: '藏王樹冰', time: '09:30', location: '藏王纜車山頂線', note: '欣賞樹冰奇景' },
+      { type: 'transport', title: '前往仙台', time: '13:00', location: '藏王溫泉 → 仙台站', note: '高速巴士 (約100分鐘)' },
+      { type: 'attraction', title: '一番町逛街', time: '15:30', location: '仙台一番町', note: '' },
+      { type: 'food', title: '晚餐', time: '18:00', location: '仙台市區', note: '牛舌料理' },
+      { type: 'accommodation', title: '仙台蒙特利酒店', time: '20:00', location: '仙台市青葉區中央4-1-8', note: 'Check-in' },
+    ]
+  },
+  {
+    day: 7, date: '12/21', location: 'Sendai',
+    items: [
+      { type: 'attraction', title: '銀山溫泉 & 狐狸村', time: '08:30', location: '仙台站集合', note: '一日遊套裝行程' },
+      { type: 'food', title: '晚餐: 仙台和牛', time: '19:00', location: '仙台市區', note: '享受高級燒肉' },
+    ]
+  },
+  {
+    day: 8, date: '12/22', location: 'Narita',
+    items: [
+      { type: 'attraction', title: '仙台市區觀光', time: '09:00', location: '瑞鳳殿, 仙台城跡, 大崎八幡宮', note: '搭乘盧普兒仙台觀光巴士' },
+      { type: 'transport', title: '前往成田', time: '14:00', location: '仙台 → 東京 → 成田', note: '新幹線 Yamabiko/Hayabusa 至東京，轉乘成田特快 NEX' },
+      { type: 'accommodation', title: 'MYSTAYS 成田精品酒店', time: '19:00', location: '成田市小山31', note: 'Check-in' },
+    ]
+  },
+  {
+    day: 9, date: '12/23', location: 'Narita',
+    items: [
+      { type: 'attraction', title: '成田山新勝寺', time: '10:00', location: '成田山新勝寺', note: '逛表參道' },
+      { type: 'flight', title: '回程航班 CI 0109', time: '17:30 - 22:45', location: 'NRT(T2) → TPE(T2)', note: '中華航空' },
+    ]
+  }
+];
 
-        const TRIP_ID = 'japan-winter-2025'; // 唯一的旅程 ID
+const USERS = [
+  { id: 'user1', name: '小批' },
+  { id: 'user2', name: '百涵' }
+];
 
-        // --- 🤖 AI 預先分析的景點攻略資料庫 ---
-        const AI_HINTS = {
-            "皇居外苑": "攻略：二重橋是必拍景點。建議從「櫻田門」進入，視野較為開闊。若遇到皇居東御苑開放日，不妨進去參觀（免費）。",
-            "淺草寺": "冷知識：雷門的大燈籠重達 700 公斤！仲見世通必吃：人形燒、炸肉餅。攻略：想避開人潮拍雷門，建議早上 8 點前或晚上 8 點後前往。",
-            "晴空塔": "攻略：預約 15:30 是為了同時看日景、夕陽和百萬夜景。別忘了去 4 樓戶外露台拍晴空塔全貌。",
-            "秋葉原動漫巡禮": "攻略：Radio 會館是綜合型大樓，適合一次買齊。想找稀有品要去巷弄裡的小店。週日中央通會封街變成步行者天國。",
-            "原宿竹下通": "攻略：這裡人潮洶湧，知名可麗餅店通常大排長龍。建議平日上午前往。附近巷弄裡的「裡原宿」有更多個性潮牌。",
-            "澀谷 SKY": "必讀：門票非常搶手，一定要提前一個月訂！這個時段去剛好可以看日落。注意頂樓風大，且禁止攜帶腳架、自拍棒和帽子。",
-            "藏王樹冰": "極重要攻略：山頂溫度極低（-10度以下），務必「全副武裝」：防水雪靴、厚手套、毛帽、防風外套。手機容易凍到關機，建議貼暖暖包。",
-            "藏王溫泉": "特色：強酸性的硫磺泉，對皮膚病有療效，但銀飾品會變黑，入浴前請摘下。",
-            "銀山溫泉": "攻略：傍晚藍調時刻（Blue Hour）是拍照黃金時間，瓦斯燈亮起搭配雪景如夢似幻。人行道可能結冰濕滑，走路請小步慢行。",
-            "藏王狐狸村": "安全須知：千萬不要蹲下或嘗試觸摸狐狸，牠們會以為你要餵食而咬人。只能在指定區域抱狐狸拍照。隨身物品要收好，狐狸很愛咬塑膠袋。",
-            "瑞鳳殿": "背景：伊達政宗的靈廟，建築風格華麗，稱為「桃山文化」。戰後重建，色彩鮮豔，在雪景中非常醒目。"
-        };
+// --- Helper Components ---
 
-        // --- 初始行程資料 (含天氣預報) ---
-        // 注意：這裡預填了天氣資訊，實際應用需接天氣 API，但為簡化此處手動填寫
-        const INITIAL_ITINERARY = [
-            { id: 'd1', day: 1, date: "12/15", weekday: "日", title: "東京抵達", weather: "cloudy", temp: "8°C", rain: "20%", cloth: "發熱衣+毛衣+防風外套", activities: [
-                { id: 'a1', time: "16:25", title: "飛往東京", detail: "CI0106 TPE -> NRT (T2)", notes: "" },
-                { id: 'a2', time: "21:00", title: "SKYLINER 進市區", detail: "成田T2 -> 京成上野 (¥2570)", notes: "" },
-                { id: 'a3', time: "22:30", title: "飯店 Check-in", detail: "MYSTAYS 御茶之水", notes: "記得出示護照" }
-            ]},
-            { id: 'd2', day: 2, date: "12/16", weekday: "一", title: "經典東京", weather: "sunny", temp: "10°C", rain: "0%", cloth: "洋蔥式穿搭，好走的鞋", activities: [
-                { id: 'b1', time: "09:00", title: "皇居外苑", detail: "二重橋散步", notes: "" },
-                { id: 'b2', time: "13:00", title: "淺草寺", detail: "雷門 & 仲見世通", notes: "" },
-                { id: 'b3', time: "15:30", title: "晴空塔", detail: "預約 15:30 看夕陽", notes: "" },
-                { id: 'b4', time: "18:30", title: "秋葉原動漫巡禮", detail: "晚餐在此解決", notes: "" }
-            ]},
-            { id: 'd3', day: 3, date: "12/17", weekday: "二", title: "潮流聖地", weather: "sunny", temp: "12°C", rain: "10%", cloth: "輕便保暖，適合逛街", activities: [
-                { id: 'c1', time: "10:00", title: "原宿竹下通", detail: "逛街吃可麗餅", notes: "" },
-                { id: 'c2', time: "14:20", title: "澀谷 SKY", detail: "預約 14:20，禁止帶腳架", notes: "" },
-                { id: 'c3', time: "17:00", title: "池袋動漫聖地", detail: "Animate 總店", notes: "" }
-            ]},
-            { id: 'd4', day: 4, date: "12/18", weekday: "三", title: "前往雪國", weather: "snow", temp: "-2°C", rain: "80%雪", cloth: "進入雪國！防水雪靴、手套毛帽必備", activities: [
-                { id: 'd1', time: "12:00", title: "山形新幹線", detail: "東京 -> 山形 (約2.5hr)", notes: "車上吃便當" },
-                { id: 'd2', time: "15:00", title: "巴士上山", detail: "山形站 -> 藏王溫泉", notes: "準備零錢¥1000" },
-                { id: 'd3', time: "16:00", title: "入住飯店", detail: "高宮琉璃渡假酒店", notes: "享受溫泉" }
-            ]},
-            { id: 'd5', day: 5, date: "12/19", weekday: "四", title: "藏王滑雪", weather: "snow", temp: "-5°C", rain: "90%雪", cloth: "全套專業滑雪裝備", activities: [
-                { id: 'e1', time: "10:00", title: "租借裝備", detail: "飯店或附近雪具店", notes: "" },
-                { id: 'e2', time: "11:00", title: "滑雪課程", detail: "11:00 - 17:00", notes: "注意安全，量力而為" }
-            ]},
-            { id: 'd6', day: 6, date: "12/20", weekday: "五", title: "樹冰與仙台", weather: "cloudy", temp: "2°C", rain: "30%", cloth: "山上極冷需重裝，下山後一般冬裝", activities: [
-                { id: 'f1', time: "09:00", title: "藏王樹冰", detail: "搭乘纜車至山頂", notes: "山頂非常冷，注意保暖" },
-                { id: 'f2', time: "14:30", title: "前往仙台", detail: "巴士下山轉 JR 仙山線", notes: "" },
-                { id: 'f3', time: "18:00", title: "入住仙台", detail: "仙台蒙特利酒店", notes: "" }
-            ]},
-            { id: 'd7', day: 7, date: "12/21", weekday: "六", title: "療癒之旅", weather: "snow", temp: "0°C", rain: "60%雪", cloth: "戶外行程多，鞋子需防滑", activities: [
-                { id: 'g1', time: "08:30", title: "套裝行程出發", detail: "前往狐狸村", notes: "準時集合" },
-                { id: 'g2', time: "10:00", title: "藏王狐狸村", detail: "抱狐狸體驗", notes: "勿隨意觸摸" },
-                { id: 'g3', time: "14:00", title: "銀山溫泉", detail: "大正浪漫街景", notes: "傍晚拍照最美" }
-            ]},
-            { id: 'd8', day: 8, date: "12/22", weekday: "日", title: "仙台返程", weather: "cloudy", temp: "8°C", rain: "20%", cloth: "舒適市區觀光裝扮", activities: [
-                { id: 'h1', time: "09:00", title: "瑞鳳殿 & 城跡", detail: "伊達政宗歷史巡禮", notes: "" },
-                { id: 'h2', time: "15:00", title: "新幹線回上野", detail: "隼號 Hayabusa", notes: "" },
-                { id: 'h3', time: "19:00", title: "入住成田", detail: "MYSTAYS 成田精品", notes: "" }
-            ]},
-            { id: 'd9', day: 9, date: "12/23", weekday: "一", title: "返回台灣", weather: "sunny", temp: "15°C", rain: "0%", cloth: "輕便為主，方便搭機", activities: [
-                { id: 'i1', time: "09:00", title: "成田山新勝寺", detail: "機場附近半日遊", notes: "可選行程" },
-                { id: 'i2', time: "14:30", title: "機場報到", detail: "成田 T2", notes: "" },
-                { id: 'i3', time: "17:30", title: "飛往台北", detail: "CI0109", notes: "平安回家" }
-            ]}
-        ];
+const Snowfall = () => {
+  return (
+    <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden" aria-hidden="true">
+      {[...Array(20)].map((_, i) => (
+        <div
+          key={i}
+          className="absolute text-white/20 animate-fall"
+          style={{
+            left: `${Math.random() * 100}%`,
+            top: `-20px`,
+            animationDuration: `${Math.random() * 5 + 5}s`,
+            animationDelay: `${Math.random() * 5}s`,
+            fontSize: `${Math.random() * 20 + 10}px`
+          }}
+        >
+          <Snowflake />
+        </div>
+      ))}
+    </div>
+  );
+};
 
-        // --- Icons (Lucide) ---
-        const Icons = {
-            Grid: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>,
-            List: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>,
-            Wallet: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></svg>,
-            Heart: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>,
-            Plane: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5 3.4 2.6-3.7 3.7-3.4-1.3-.5.3v.5l3.7 3.2 1.6 3.6.5.3.5-1.3 1.3 3.4 3.7-3.7 2.6 3.4.5-.3.5-1.1c.4-.2.6-.6.5-1.1z"/></svg>,
-            ChevronLeft: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>,
-            MapPin: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>,
-            Edit3: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>,
-            X: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 18 18"/></svg>,
-            Save: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>,
-            Plus: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>,
-            Trash2: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>,
-            Sparkles: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></svg>,
-            CloudRain: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"/><path d="M16 14v6"/><path d="M8 14v6"/><path d="M12 16v6"/></svg>,
-            Snowflake: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="2" x2="22" y1="12" y2="12"/><line x1="12" x2="12" y1="2" y2="22"/><path d="m20 16-4-4 4-4"/><path d="m4 8 4 4-4 4"/><path d="m16 4-4 4-4-4"/><path d="m8 20 4-4 4 4"/></svg>,
-            Sun: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>,
-            CheckSquare: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 11 3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>,
-            Square: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/></svg>,
-        };
-        const Icon = ({ name, className }) => { const C = Icons[name]; return <div className={className}>{C ? <C /> : null}</div>; };
+// --- Weather Widget ---
+const WeatherWidget = ({ location, date }) => {
+  // Mock logic based on location and winter dates
+  const isSnowy = location === 'Yamagata' || location === 'Zao';
+  const temp = isSnowy ? '-2°C' : '8°C';
+  const condition = isSnowy ? '大雪' : '晴時多雲';
+  const precip = isSnowy ? '80%' : '10%';
+  const Icon = isSnowy ? CloudSnow : (condition.includes('雨') ? CloudRain : Sun);
 
-        // --- Hook: Firebase 資料同步 ---
-        const useTripData = () => {
-            const [itinerary, setItinerary] = useState(INITIAL_ITINERARY);
-            const [expenses, setExpenses] = useState([]);
-            const [wishlist, setWishlist] = useState([]);
-            const [user, setUser] = useState(null);
-            const dbRef = useRef(null);
+  return (
+    <div className="mx-4 mt-4 mb-2 p-3 bg-white/90 backdrop-blur-sm rounded-xl shadow-sm border border-red-100 flex items-center justify-between">
+      <div className="flex items-center gap-3">
+        <div className={`p-2 rounded-full ${isSnowy ? 'bg-blue-100 text-blue-600' : 'bg-orange-100 text-orange-500'}`}>
+          <Icon size={24} />
+        </div>
+        <div>
+          <p className="font-bold text-gray-800">{location === 'Yamagata' ? '山形/藏王' : (location === 'Sendai' ? '仙台' : '東京')}</p>
+          <p className="text-xs text-gray-500">{date} • {condition}</p>
+        </div>
+      </div>
+      <div className="text-right">
+        <p className="text-xl font-bold text-gray-800">{temp}</p>
+        <p className="text-xs text-blue-500">降雨 {precip}</p>
+      </div>
+    </div>
+  );
+};
 
-            useEffect(() => {
-                if (!firebaseConfig.apiKey) { console.warn("Firebase config missing"); return; }
-                const { initializeApp, getAuth, signInAnonymously, onAuthStateChanged, getFirestore, doc, onSnapshot, setDoc, collection, writeBatch } = window.fb;
-                const app = initializeApp(firebaseConfig);
-                const auth = getAuth(app);
-                dbRef.current = getFirestore(app);
-                signInAnonymously(auth);
-                onAuthStateChanged(auth, u => {
-                    if (u) {
-                        setUser(u);
-                        const itineraryRef = doc(dbRef.current, 'trips', TRIP_ID, 'data', 'itinerary');
-                        onSnapshot(itineraryRef, s => {
-                            if (s.exists()) setItinerary(s.data().data);
-                            else setDoc(itineraryRef, { data: INITIAL_ITINERARY });
-                        });
-                        onSnapshot(collection(dbRef.current, 'trips', TRIP_ID, 'expenses'), s => {
-                            setExpenses(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.createdAt - a.createdAt));
-                        });
-                        onSnapshot(collection(dbRef.current, 'trips', TRIP_ID, 'wishlist'), s => {
-                            setWishlist(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.createdAt - a.createdAt));
-                        });
-                    }
-                });
-            }, []);
+// --- Main App Component ---
 
-            const actions = useMemo(() => ({
-                updateDayActivities: async (dayId, newActivities) => {
-                    if (!user || !dbRef.current) return;
-                    const newItinerary = itinerary.map(d => d.id === dayId ? { ...d, activities: newActivities } : d);
-                    await window.fb.updateDoc(window.fb.doc(dbRef.current, 'trips', TRIP_ID, 'data', 'itinerary'), { data: newItinerary });
-                },
-                addExpense: async (exp) => {
-                    if (!user || !dbRef.current) return;
-                    await window.fb.setDoc(window.fb.doc(window.fb.collection(dbRef.current, 'trips', TRIP_ID, 'expenses')), { ...exp, createdAt: Date.now() });
-                },
-                deleteExpense: async (id) => await window.fb.deleteDoc(window.fb.doc(dbRef.current, 'trips', TRIP_ID, 'expenses', id)),
-                addWish: async (text) => {
-                     if (!user || !dbRef.current) return;
-                    await window.fb.setDoc(window.fb.doc(window.fb.collection(dbRef.current, 'trips', TRIP_ID, 'wishlist')), { text, checked: false, createdAt: Date.now() });
-                },
-                toggleWish: async (id, checked) => await window.fb.updateDoc(window.fb.doc(dbRef.current, 'trips', TRIP_ID, 'wishlist', id), { checked }),
-                deleteWish: async (id) => await window.fb.deleteDoc(window.fb.doc(dbRef.current, 'trips', TRIP_ID, 'wishlist', id)),
-            }), [user, itinerary]);
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [activeTab, setActiveTab] = useState('itinerary');
+  const [currentDay, setCurrentDay] = useState(1);
+  const [itinerary, setItinerary] = useState([]);
+  const [expenses, setExpenses] = useState([]);
+  const [wishes, setWishes] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-            return { itinerary, expenses, wishlist, user, actions };
-        };
+  // Auth & Data Init
+  useEffect(() => {
+    const initAuth = async () => {
+      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+        await signInWithCustomToken(auth, __initial_auth_token);
+      } else {
+        await signInAnonymously(auth);
+      }
+    };
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, setUser);
+    return () => unsubscribe();
+  }, []);
 
-        // --- Components ---
+  // Firestore Listeners
+  useEffect(() => {
+    if (!user) return;
 
-        // 底部導航列
-        const BottomNav = ({ activeTab, onTabChange }) => (
-            <div className="fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-md border-t border-blue-100/50 px-6 py-3 flex justify-around z-40 pb-safe shadow-[0_-4px_10px_rgba(0,0,0,0.05)]">
-                {[
-                    { id: 'dashboard', icon: 'Grid', label: '總覽' },
-                    { id: 'itinerary', icon: 'List', label: '行程' },
-                    { id: 'expenses', icon: 'Wallet', label: '分帳' },
-                    { id: 'wishlist', icon: 'Heart', label: '願望' },
-                ].map(tab => (
-                    <button key={tab.id} onClick={() => onTabChange(tab.id)} className={`flex flex-col items-center gap-1 transition-all ${activeTab === tab.id ? 'text-blue-600 scale-105' : 'text-slate-400'}`}>
-                        <Icon name={tab.icon} className={`w-6 h-6 ${activeTab === tab.id ? 'stroke-[2.5px]' : 'stroke-2'}`} />
-                        <span className="text-[10px] font-medium">{tab.label}</span>
-                    </button>
-                ))}
-            </div>
-        );
+    // Itinerary Listener
+    const itineraryRef = collection(db, 'artifacts', appId, 'public', 'data', 'itinerary');
+    const unsubItinerary = onSnapshot(query(itineraryRef, orderBy('day')), (snapshot) => {
+      if (snapshot.empty) {
+        // Initialize if empty
+        const batch = writeBatch(db);
+        INITIAL_ITINERARY.forEach(day => {
+          const docRef = doc(collection(db, 'artifacts', appId, 'public', 'data', 'itinerary'));
+          batch.set(docRef, day);
+        });
+        batch.commit();
+      } else {
+        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        // Sort items by time roughly
+        setItinerary(data);
+      }
+      setLoading(false);
+    }, (err) => console.error("Itinerary Error:", err));
 
-        // 總覽頁面
-        const DashboardView = ({ itinerary }) => {
-            const today = new Date();
-            today.setHours(0,0,0,0);
-            const tripStartDate = new Date('2025-12-15T00:00:00');
-            const diffTime = tripStartDate - today;
-            const daysUntil = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    // Expenses Listener
+    const expensesRef = collection(db, 'artifacts', appId, 'public', 'data', 'expenses');
+    const unsubExpenses = onSnapshot(query(expensesRef, orderBy('createdAt', 'desc')), (snapshot) => {
+      setExpenses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (err) => console.error("Expenses Error:", err));
+
+    // Wishes Listener
+    const wishesRef = collection(db, 'artifacts', appId, 'public', 'data', 'wishes');
+    const unsubWishes = onSnapshot(wishesRef, (snapshot) => {
+      setWishes(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (err) => console.error("Wishes Error:", err));
+
+    return () => {
+      unsubItinerary();
+      unsubExpenses();
+      unsubWishes();
+    };
+  }, [user]);
+
+  // --- Views ---
+
+  const ItineraryView = () => {
+    const dayData = itinerary.find(d => d.day === currentDay);
+    
+    // Sort items by time string simple comparison
+    const sortedItems = dayData ? [...dayData.items].sort((a, b) => a.time.localeCompare(b.time)) : [];
+
+    const handleUpdateItem = async (dayId, itemIndex, newItem) => {
+      const dayDoc = itinerary.find(d => d.id === dayId);
+      // We need to find the item in the original unsorted array or trust the index if we render sorted?
+      // To be safe, let's identify by strict equality of properties or add an ID to items. 
+      // For this simple version, we will find the index in the original array that matches the item content.
+      // A better way for production is giving every item a unique ID.
+      // Here, let's just update the day's items array. 
+      
+      // Since we sorted for display, we must be careful. 
+      // Let's rely on the unsorted `dayData.items` for the index passed from the map if we map over `dayData.items` directly?
+      // No, let's map over `dayData.items` in render to keep indices stable for now.
+    };
+
+    // Simplified update logic: directly modifying the array in Firestore
+    // Note: In a real app, each item should have a UUID.
+    const updateDayItems = async (dayId, newItems) => {
+      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'itinerary', dayId), {
+        items: newItems
+      });
+    };
+
+    const handleAddItem = async (dayId) => {
+       const dayDoc = itinerary.find(d => d.id === dayId);
+       const newItem = {
+         type: 'attraction',
+         title: '新行程',
+         time: '12:00',
+         location: '地點',
+         note: '備註'
+       };
+       await updateDayItems(dayId, [...dayDoc.items, newItem]);
+    };
+
+    const getTypeStyles = (type) => {
+      switch (type) {
+        case 'flight': return 'bg-blue-50 border-blue-200 text-blue-800';
+        case 'transport': return 'bg-green-50 border-green-200 text-green-800';
+        case 'food': return 'bg-orange-50 border-orange-200 text-orange-800';
+        case 'accommodation': return 'bg-purple-50 border-purple-200 text-purple-800';
+        default: return 'bg-red-50 border-red-200 text-red-800'; // Attraction
+      }
+    };
+
+    const getTypeIcon = (type) => {
+      switch (type) {
+        case 'flight': return <Plane size={18} />;
+        case 'transport': return <Train size={18} />;
+        case 'food': return <Utensils size={18} />;
+        case 'accommodation': return <Bed size={18} />;
+        default: return <MapPin size={18} />;
+      }
+    };
+
+    return (
+      <div className="pb-24">
+        {/* Day Selector */}
+        <div className="sticky top-0 z-20 bg-white/95 backdrop-blur shadow-sm border-b border-gray-100 overflow-x-auto no-scrollbar py-3">
+          <div className="flex px-4 gap-3 min-w-max">
+            {itinerary.map((d) => (
+              <button
+                key={d.day}
+                onClick={() => setCurrentDay(d.day)}
+                className={`flex flex-col items-center justify-center w-14 h-14 rounded-2xl transition-all duration-200 ${
+                  currentDay === d.day 
+                    ? 'bg-gradient-to-br from-red-500 to-red-600 text-white shadow-lg shadow-red-200 scale-105' 
+                    : 'bg-gray-50 text-gray-400 hover:bg-gray-100'
+                }`}
+              >
+                <span className="text-[10px] font-medium opacity-80">Day</span>
+                <span className="text-lg font-bold leading-none">{d.day}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {dayData && (
+          <>
+            <WeatherWidget location={dayData.location} date={dayData.date} />
             
-            let currentDayData = itinerary[0];
-            let dayProgressText = "";
+            <div className="px-4 space-y-4 mt-2">
+              <div className="flex justify-between items-end mb-2 px-1">
+                 <div>
+                    <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
+                       {dayData.date} 行程
+                    </h2>
+                    <p className="text-sm text-gray-500">
+                      {dayData.location === 'Tokyo' ? '東京' : dayData.location === 'Yamagata' ? '山形藏王' : dayData.location === 'Sendai' ? '仙台' : '成田'}
+                    </p>
+                 </div>
+                 <button onClick={() => handleAddItem(dayData.id)} className="text-red-500 text-sm font-medium flex items-center gap-1 bg-red-50 px-3 py-1.5 rounded-full hover:bg-red-100">
+                   <Plus size={14} /> 新增
+                 </button>
+              </div>
 
-            if (daysUntil > 0) {
-                dayProgressText = `還有 ${daysUntil} 天出發`;
-            } else {
-                const currentDayIndex = Math.min(Math.abs(daysUntil), itinerary.length - 1);
-                currentDayData = itinerary[currentDayIndex];
-                dayProgressText = daysUntil === 0 ? "就是今天！" : `旅程第 ${Math.abs(daysUntil) + 1} 天`;
-            }
-            
-            const WeatherIcon = currentDayData.weather === 'snow' ? 'Snowflake' : currentDayData.weather === 'rain' ? 'CloudRain' : 'Sun';
-            const weatherColor = currentDayData.weather === 'snow' ? 'text-blue-300' : currentDayData.weather === 'rain' ? 'text-blue-400' : 'text-yellow-400';
-
-            return (
-                <div className="p-4 space-y-4 pt-16">
-                    {/* Header */}
-                     <div className="flex items-center justify-between mb-2 px-1">
-                        <div>
-                            <h1 className="text-2xl font-bold text-slate-800 tracking-tight flex items-center gap-2">
-                                Japan Trip <Icon name="Plane" className="w-5 h-5 text-blue-500 rotate-[-45deg]"/>
-                            </h1>
-                            <p className="text-xs text-slate-500 tracking-wider">{today.toLocaleDateString()}</p>
-                        </div>
+              {dayData.items.map((item, idx) => (
+                <div key={idx} className={`relative group rounded-2xl border-l-4 p-4 shadow-sm bg-white transition-all ${getTypeStyles(item.type).replace('bg-', 'border-').split(' ')[1]}`}>
+                  <div className="flex justify-between items-start mb-2">
+                    <div className={`flex items-center gap-2 px-2 py-1 rounded-lg text-xs font-bold uppercase tracking-wider ${getTypeStyles(item.type)}`}>
+                       {getTypeIcon(item.type)}
+                       {item.type === 'food' ? '午餐/晚餐' : item.type === 'attraction' ? '景點' : item.type === 'flight' ? '航班' : item.type === 'accommodation' ? '住宿' : '交通'}
                     </div>
-
-                    {/* Status Card */}
-                    <div className="glass-card rounded-3xl p-6 text-slate-700 relative overflow-hidden">
-                        <div className="absolute -right-8 -top-8 text-blue-100/30"><Icon name="Snowflake" className="w-32 h-32" /></div>
-                        <p className="text-xs font-bold text-blue-500 tracking-wider mb-1">TRIP STATUS</p>
-                        <h2 className="text-3xl font-bold text-blue-800 mb-4">{dayProgressText}</h2>
-                         <div className="flex items-center gap-2 text-sm text-slate-600 bg-white/50 p-2 rounded-xl w-fit backdrop-blur-sm">
-                            <Icon name="MapPin" className="w-4 h-4 text-blue-500" />
-                            下一站：{currentDayData.title}
-                        </div>
+                    <div className="flex gap-2">
+                       <button 
+                         onClick={() => {
+                            const newTime = prompt('修改時間', item.time);
+                            if(newTime) {
+                                const newItems = [...dayData.items];
+                                newItems[idx] = { ...item, time: newTime };
+                                updateDayItems(dayData.id, newItems);
+                            }
+                         }}
+                         className="text-gray-400 hover:text-gray-600 p-1"
+                        >
+                         <Edit2 size={14} />
+                       </button>
+                       <button 
+                         onClick={() => {
+                             if(confirm("確定要刪除這個行程嗎？")) {
+                                const newItems = dayData.items.filter((_, i) => i !== idx);
+                                updateDayItems(dayData.id, newItems);
+                             }
+                         }}
+                         className="text-gray-400 hover:text-red-500 p-1"
+                        >
+                         <Trash2 size={14} />
+                       </button>
                     </div>
+                  </div>
 
-                     {/* Weather Widget */}
-                    <div className="glass-card rounded-3xl p-5 flex items-stretch">
-                        <div className="flex-1 pr-4 border-r border-blue-100/50">
-                            <p className="text-xs font-bold text-slate-400 mb-1">今日天氣 ({currentDayData.day > 9 ? 'N/A' : currentDayData.date})</p>
-                            <div className="flex items-center gap-3">
-                                <Icon name={WeatherIcon} className={`w-10 h-10 ${weatherColor}`} />
-                                <div>
-                                    <p className="text-2xl font-bold text-slate-800">{currentDayData.temp}</p>
-                                    <p className="text-xs text-slate-500">降雨機率: {currentDayData.rain}</p>
-                                </div>
-                            </div>
-                        </div>
-                         <div className="flex-1 pl-4 flex flex-col justify-center">
-                             <p className="text-xs font-bold text-slate-400 mb-1">建議穿著</p>
-                             <p className="text-sm text-slate-700 leading-relaxed">{currentDayData.cloth}</p>
-                        </div>
-                    </div>
-                </div>
-            );
-        };
-
-        // 行程總覽 (Q版月曆)
-        const CalendarGridView = ({ itinerary, onSelectDay }) => (
-            <div className="p-4 pt-16">
-                 <h2 className="text-xl font-bold text-slate-800 mb-4 px-1 flex items-center gap-2">行程一覽 <Icon name="Sparkles" className="w-5 h-5 text-yellow-400"/></h2>
-                <div className="grid grid-cols-2 gap-4 pb-24">
-                    {itinerary.map((day) => (
-                        <div key={day.id} onClick={() => onSelectDay(day)} className="aspect-square glass-card rounded-3xl p-3 flex flex-col justify-between cursor-pointer transition-transform active:scale-95 relative overflow-hidden q-calendar-shadow group hover:border-blue-300/50">
-                            <div className="flex justify-between items-start z-10">
-                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${['六','日'].includes(day.weekday) ? 'bg-red-100 text-red-500' : 'bg-slate-200 text-slate-500'}`}>{day.weekday}</span>
-                                {day.weather === 'snow' && <Icon name="Snowflake" className="w-4 h-4 text-blue-300" />}
-                            </div>
-                            <div className="absolute inset-0 flex items-center justify-center z-0 pt-4">
-                                <span className="text-5xl font-bold text-slate-800/80 font-mono tracking-tighter group-hover:text-blue-600/80 transition-colors">{day.date.split('/')[1]}</span>
-                            </div>
-                            <div className="z-10 text-center bg-white/60 backdrop-blur-sm py-1 rounded-xl">
-                                <span className="text-xs font-bold text-slate-700 line-clamp-1">{day.title}</span>
-                            </div>
-                        </div>
-                    ))}
-                </div>
-            </div>
-        );
-
-        // 單日行程列表 (滑入視窗)
-        const DayDetailView = ({ day, onBack, onSelectActivity }) => (
-            <div className="fixed inset-0 bg-snow-theme z-30 slide-in-right flex flex-col">
-                 <div className="absolute inset-0 bg-blue-50/60 backdrop-blur-[2px]"></div>
-                 <div className="relative z-10 flex-1 flex flex-col h-full">
-                    <div className="pt-12 px-4 pb-4 flex items-center gap-3 bg-white/60 backdrop-blur-md border-b border-white/50">
-                        <button onClick={onBack} className="p-2 glass-card rounded-full active:bg-slate-100"><Icon name="ChevronLeft" className="w-6 h-6 text-slate-600" /></button>
-                        <div>
-                            <h2 className="text-xl font-bold text-slate-800">Day {day.day} - {day.title}</h2>
-                            <p className="text-xs text-slate-500">{day.date} ({day.weekday})</p>
-                        </div>
-                    </div>
-                    <div className="flex-1 overflow-y-auto p-4 space-y-3 pb-24 no-scrollbar">
-                        {day.activities.map((act, idx) => (
-                            <div key={act.id} onClick={() => onSelectActivity(act)} className="glass-card p-5 rounded-2xl flex items-center justify-between active:bg-white/90 transition-all relative overflow-hidden group">
-                                <div className="absolute left-0 top-0 bottom-0 w-1 bg-blue-200 group-hover:bg-blue-400 transition-colors"></div>
-                                <div className="flex items-center gap-4 ml-2">
-                                    <span className="font-mono font-bold text-blue-600 text-sm w-12">{act.time}</span>
-                                    <span className="font-bold text-slate-700 text-lg line-clamp-1">{act.title}</span>
-                                </div>
-                                <div className="bg-slate-100/50 p-1 rounded-full"><div className="rotate-180"><Icon name="ChevronLeft" className="w-4 h-4 text-slate-400" /></div></div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            </div>
-        );
-
-        // 行程詳細 & 編輯 (底部彈出)
-        const ActivityBottomSheet = ({ activity, isOpen, onClose, onSave, onDelete }) => {
-            if (!isOpen || !activity) return null;
-            const [isEditing, setIsEditing] = useState(false);
-            const [editData, setEditData] = useState(activity);
-            const aiHint = AI_HINTS[activity.title] || null; // 自動搜尋攻略
-
-            useEffect(() => { setEditData(activity); setIsEditing(false); }, [activity]);
-
-            const handleSave = () => { onSave(editData); setIsEditing(false); };
-            const openGoogleMap = () => window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(activity.title + " " + activity.detail)}`, '_blank');
-
-            return (
-                <div className="fixed inset-0 z-50 flex items-end justify-center">
-                    <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity" onClick={onClose} />
-                    <div className="bg-white/95 backdrop-blur-xl w-full max-w-md rounded-t-[2rem] p-6 shadow-2xl relative slide-up-sheet max-h-[85vh] overflow-y-auto no-scrollbar">
-                        <div className="w-12 h-1.5 bg-slate-200 rounded-full mx-auto mb-6" />
-                        <div className="flex justify-between items-start mb-6">
-                             {!isEditing ? (
-                                <div className="flex gap-3 items-center">
-                                     <div className="bg-blue-100 p-3 rounded-2xl text-blue-600"><Icon name="MapPin" className="w-6 h-6" /></div>
-                                    <div><h3 className="text-2xl font-bold text-slate-800 leading-tight">{activity.title}</h3><span className="text-blue-600 font-mono font-bold">{activity.time}</span></div>
-                                </div>
-                             ) : (<p className="text-lg font-bold text-slate-700">編輯行程</p>)}
-                            <button onClick={() => setIsEditing(!isEditing)} className="p-2 bg-slate-100 rounded-full text-slate-500 active:bg-slate-200"><Icon name={isEditing ? "X" : "Edit3"} className="w-5 h-5" /></button>
-                        </div>
-
-                        {isEditing ? (
-                            <div className="space-y-4">
-                                <div className="flex gap-3">
-                                    <div className="w-1/3"><label className="text-[10px] font-bold text-slate-400">時間</label><input className="w-full bg-slate-100 rounded-xl px-3 py-3 font-mono font-bold text-slate-700 focus:outline-blue-500" value={editData.time} onChange={e => setEditData({...editData, time: e.target.value})} /></div>
-                                    <div className="flex-1"><label className="text-[10px] font-bold text-slate-400">標題</label><input className="w-full bg-slate-100 rounded-xl px-3 py-3 font-bold text-slate-700 focus:outline-blue-500" value={editData.title} onChange={e => setEditData({...editData, title: e.target.value})} /></div>
-                                </div>
-                                <div><label className="text-[10px] font-bold text-slate-400">內容</label><textarea className="w-full bg-slate-100 rounded-xl px-3 py-3 text-sm text-slate-600 resize-none h-24 focus:outline-blue-500" value={editData.detail} onChange={e => setEditData({...editData, detail: e.target.value})} /></div>
-                                <div><label className="text-[10px] font-bold text-slate-400">備註</label><input className="w-full bg-blue-50 border border-blue-100 rounded-xl px-3 py-3 text-sm text-slate-600 focus:outline-blue-500" value={editData.notes} onChange={e => setEditData({...editData, notes: e.target.value})} placeholder="備註..." /></div>
-                                <div className="flex gap-3 pt-4">
-                                    <button onClick={() => onDelete(activity.id)} className="flex-1 py-3 rounded-xl bg-red-50 text-red-400 font-bold text-sm flex justify-center items-center gap-2 active:scale-95 transition-transform"><Icon name="Trash2" className="w-4 h-4" /> 刪除</button>
-                                    <button onClick={handleSave} className="flex-[2] py-3 rounded-xl bg-blue-600 text-white font-bold text-sm flex justify-center items-center gap-2 shadow-blue-200 shadow-lg active:scale-95 transition-transform"><Icon name="Save" className="w-4 h-4" /> 儲存</button>
-                                </div>
-                            </div>
-                        ) : (
-                            <div className="space-y-6">
-                                <div><p className="text-sm font-bold text-slate-400 mb-2 tracking-wider">詳細內容</p><p className="text-slate-700 text-lg leading-relaxed whitespace-pre-line">{activity.detail || "無詳細內容"}</p></div>
-                                <button onClick={openGoogleMap} className="w-full flex items-center justify-center gap-2 py-3 bg-green-50 text-green-700 rounded-xl font-bold text-sm hover:bg-green-100 transition active:scale-95"><Icon name="MapPin" className="w-4 h-4" /> 開啟 Google Maps</button>
-                                {aiHint && (<div className="bg-yellow-50 p-4 rounded-xl border border-yellow-200/50 relative overflow-hidden"><div className="absolute -right-2 -top-2 text-yellow-200/50"><Icon name="Sparkles" className="w-16 h-16"/></div><p className="text-[10px] font-bold text-yellow-600 mb-1 flex items-center gap-1 relative z-10"><Icon name="Sparkles" className="w-3 h-3"/>小幫手攻略</p><p className="text-slate-700 text-sm leading-relaxed relative z-10">{aiHint}</p></div>)}
-                                {activity.notes && (<div className="bg-slate-50 p-4 rounded-xl border border-slate-100"><p className="text-[10px] font-bold text-slate-400 mb-1">備註</p><p className="text-slate-600 text-sm">{activity.notes}</p></div>)}
-                            </div>
-                        )}
-                    </div>
-                </div>
-            );
-        };
-
-        // 分帳 & 願望清單共用組件
-        const SharedListView = ({ title, icon, items, onItemAdd, onItemDelete, type }) => {
-            const [input, setInput] = useState({ text: '', amount: '', currency: 'JPY', payer: '小P' });
-            const handleAdd = () => {
-                if (type === 'expenses') {
-                    if (!input.text || !input.amount) return;
-                    onItemAdd({ ...input, amount: Number(input.amount) });
-                    setInput({ text: '', amount: '', currency: 'JPY', payer: '小P' });
-                } else {
-                    if (!input.text) return;
-                    onItemAdd(input.text);
-                    setInput({ ...input, text: '' });
-                }
-            };
-
-            const summary = useMemo(() => {
-                if (type !== 'expenses') return null;
-                let s = { '小P': { JPY: 0, TWD: 0 }, '百涵': { JPY: 0, TWD: 0 } };
-                items.forEach(i => s[i.payer][i.currency] += i.amount);
-                const totalJPY = s['小P'].JPY + s['百涵'].JPY;
-                const totalTWD = s['小P'].TWD + s['百涵'].TWD;
-                const oweJPY = (totalJPY / 2) - s['小P'].JPY;
-                const oweTWD = (totalTWD / 2) - s['小P'].TWD;
-                return { totalJPY, totalTWD, oweJPY, oweTWD };
-            }, [items, type]);
-
-            return (
-                <div className="p-4 pt-16 space-y-4 pb-24">
-                    <h2 className="text-xl font-bold text-slate-800 px-1 flex items-center gap-2">{title} <Icon name={icon} className={`w-6 h-6 ${type==='expenses'?'text-blue-500':'text-pink-500'}`}/></h2>
+                  <div className="pl-1">
+                    <h3 
+                      className="text-lg font-bold text-gray-800 mb-1 cursor-pointer hover:text-red-600 transition-colors"
+                      onClick={() => {
+                        const newTitle = prompt('修改標題', item.title);
+                        if(newTitle) {
+                             const newItems = [...dayData.items];
+                             newItems[idx] = { ...item, title: newTitle };
+                             updateDayItems(dayData.id, newItems);
+                        }
+                      }}
+                    >
+                      {item.title}
+                    </h3>
                     
-                    {summary && (
-                        <div className="glass-card rounded-3xl p-5 bg-gradient-to-br from-blue-500/10 to-purple-500/5">
-                            <h3 className="text-xs font-bold text-blue-600 mb-3">結算摘要 (預設平分)</h3>
-                            <div className="grid grid-cols-2 gap-4 mb-4">
-                                <div className="bg-white/60 p-3 rounded-2xl"><p className="text-xs text-slate-400">總日幣</p><p className="text-xl font-bold text-blue-600">¥{summary.totalJPY.toLocaleString()}</p></div>
-                                <div className="bg-white/60 p-3 rounded-2xl"><p className="text-xs text-slate-400">總台幣</p><p className="text-xl font-bold text-green-600">NT${summary.totalTWD.toLocaleString()}</p></div>
-                            </div>
-                            {summary.oweJPY === 0 && summary.oweTWD === 0 ? <p className="text-sm text-center font-bold text-slate-600 bg-white/60 py-2 rounded-xl">目前兩清！</p> : (
-                                <div className="space-y-2 bg-white/60 p-3 rounded-2xl">
-                                    {Math.abs(summary.oweJPY) > 0 && <p className="text-sm flex justify-between font-bold"><span>🇯🇵 {summary.oweJPY > 0 ? "小P欠百涵" : "百涵欠小P"}</span><span className="text-blue-600">¥{Math.abs(summary.oweJPY).toLocaleString()}</span></p>}
-                                    {Math.abs(summary.oweTWD) > 0 && <p className="text-sm flex justify-between font-bold"><span>🇹🇼 {summary.oweTWD > 0 ? "小P欠百涵" : "百涵欠小P"}</span><span className="text-green-600">${Math.abs(summary.oweTWD).toLocaleString()}</span></p>}
-                                </div>
-                            )}
-                        </div>
+                    <div className="flex items-center gap-2 text-sm text-gray-600 mb-2 font-mono bg-gray-50 inline-block px-2 py-0.5 rounded">
+                       <Calendar size={12} />
+                       {item.time}
+                    </div>
+
+                    <div className="text-sm text-gray-600 flex items-start gap-2 mb-3">
+                       <MapPin size={14} className="mt-0.5 shrink-0 text-gray-400" />
+                       <span 
+                         onClick={() => {
+                           const newLoc = prompt('修改地點', item.location);
+                           if(newLoc) {
+                               const newItems = [...dayData.items];
+                               newItems[idx] = { ...item, location: newLoc };
+                               updateDayItems(dayData.id, newItems);
+                           }
+                         }}
+                         className="cursor-pointer hover:underline decoration-dashed"
+                       >
+                         {item.location}
+                       </span>
+                    </div>
+
+                    {item.note && (
+                      <p 
+                        className="text-xs text-gray-500 bg-gray-50 p-2 rounded-lg"
+                        onClick={() => {
+                          const newNote = prompt('修改備註', item.note);
+                          if(newNote !== null) {
+                               const newItems = [...dayData.items];
+                               newItems[idx] = { ...item, note: newNote };
+                               updateDayItems(dayData.id, newItems);
+                          }
+                        }}
+                      >
+                        {item.note}
+                      </p>
                     )}
 
-                    <div className="glass-card rounded-3xl p-4">
-                        <div className="flex gap-2 mb-3">
-                            <input className="flex-1 bg-white/70 rounded-xl px-4 py-3 text-sm font-bold focus:outline-blue-500" placeholder={type === 'expenses' ? "項目 (如: 午餐)" : "想買什麼？"} value={input.text} onChange={e => setInput({ ...input, text: e.target.value })} />
-                            {type === 'expenses' && (
-                                <select className="bg-white/70 rounded-xl px-2 py-3 text-sm font-bold focus:outline-blue-500" value={input.payer} onChange={e => setInput({ ...input, payer: e.target.value })}><option value="小P">小P付</option><option value="百涵">百涵付</option></select>
-                            )}
-                        </div>
-                        {type === 'expenses' && (
-                            <div className="flex gap-2 mb-3">
-                                <select className="bg-white/70 rounded-xl px-3 py-3 text-sm font-bold focus:outline-blue-500 w-24" value={input.currency} onChange={e => setInput({ ...input, currency: e.target.value })}><option value="JPY">¥ JPY</option><option value="TWD">$ TWD</option></select>
-                                <input type="number" className="flex-1 bg-white/70 rounded-xl px-4 py-3 text-sm font-mono font-bold focus:outline-blue-500" placeholder="金額" value={input.amount} onChange={e => setInput({ ...input, amount: e.target.value })} />
-                            </div>
-                        )}
-                        <button onClick={handleAdd} className={`w-full py-3 rounded-xl font-bold text-white flex justify-center items-center gap-2 active:scale-95 transition-transform shadow-lg ${type==='expenses'?'bg-blue-500 shadow-blue-200':'bg-pink-500 shadow-pink-200'}`}><Icon name="Plus" className="w-5 h-5" /> 新增</button>
-                    </div>
-
-                    <div className="space-y-2">
-                        {items.map((item) => (
-                            <div key={item.id} className="glass-card p-4 rounded-2xl flex justify-between items-center">
-                                {type === 'expenses' ? (
-                                    <div className="flex items-center gap-3">
-                                        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white ${item.payer==='小P'?'bg-blue-400':'bg-orange-400'}`}>{item.payer[0]}</div>
-                                        <div><p className="font-bold text-slate-700">{item.text}</p><p className="text-xs text-slate-400">{new Date(item.createdAt).toLocaleDateString()}</p></div>
-                                    </div>
-                                ) : (
-                                    <div className="flex items-center gap-3">
-                                        <button onClick={()=>onItemDelete(item.id, 'toggle')} className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-colors ${item.checked ? 'bg-pink-400 border-pink-400' : 'border-slate-300'}`}>{item.checked && <Icon name="CheckSquare" className="w-4 h-4 text-white"/>}</button>
-                                        <span className={`font-bold ${item.checked?'text-slate-400 line-through':'text-slate-700'}`}>{item.text}</span>
-                                    </div>
-                                )}
-                                <div className="flex items-center gap-3">
-                                    {type === 'expenses' && <span className={`font-mono font-bold ${item.currency==='JPY'?'text-blue-600':'text-green-600'}`}>{item.currency==='JPY'?'¥':'$'}{item.amount.toLocaleString()}</span>}
-                                    <button onClick={() => onItemDelete(item.id)} className="p-2 text-slate-300 hover:text-red-400 active:bg-red-50 rounded-full"><Icon name="Trash2" className="w-4 h-4" /></button>
-                                </div>
-                            </div>
-                        ))}
-                        {items.length === 0 && <div className="text-center py-10 text-slate-400 opacity-50">暫無紀錄</div>}
-                    </div>
+                    <button 
+                      onClick={() => window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(item.location + ' ' + item.title)}`, '_blank')}
+                      className="mt-3 w-full flex items-center justify-center gap-2 py-2 text-xs font-medium text-gray-500 border border-gray-100 rounded-lg hover:bg-gray-50 hover:text-red-500 transition-colors"
+                    >
+                      <MapPin size={14} />
+                      打開 Google Maps
+                    </button>
+                  </div>
                 </div>
-            );
-        };
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    );
+  };
 
-        // --- Main App ---
-        const App = () => {
-            const { itinerary, expenses, wishlist, user, actions } = useTripData();
-            const [activeTab, setActiveTab] = useState('dashboard');
-            const [viewMode, setViewMode] = useState('grid');
-            const [selectedDay, setSelectedDay] = useState(null);
-            const [selectedActivity, setSelectedActivity] = useState(null);
+  const SplitBillView = () => {
+    const [amount, setAmount] = useState('');
+    const [desc, setDesc] = useState('');
+    const [payer, setPayer] = useState('user1');
+    const [currency, setCurrency] = useState('JPY');
 
-            // 處理分帳與願望清單的刪除邏輯 (包含願望清單的勾選)
-            const handleItemDelete = (id, actionType = 'delete') => {
-                if (activeTab === 'expenses') actions.deleteExpense(id);
-                else if (activeTab === 'wishlist') {
-                    if (actionType === 'toggle') {
-                        const item = wishlist.find(w => w.id === id);
-                        if(item) actions.toggleWish(id, !item.checked);
-                    } else {
-                        actions.deleteWish(id);
-                    }
-                }
-            };
+    const handleAddExpense = async () => {
+      if (!amount || !desc) return;
+      await setDoc(doc(collection(db, 'artifacts', appId, 'public', 'data', 'expenses')), {
+        amount: parseFloat(amount),
+        description: desc,
+        payer,
+        currency,
+        createdAt: serverTimestamp()
+      });
+      setAmount('');
+      setDesc('');
+    };
 
-            return (
-                <div className="min-h-screen bg-snow-theme">
-                    <div className="min-h-screen bg-blue-50/40 backdrop-blur-[1px] pb-safe relative overflow-hidden">
-                        {/* 離線提示 */}
-                        {!user && <div className="fixed top-0 left-0 right-0 bg-orange-500 text-white text-xs py-1 text-center z-50">離線模式 - 資料僅暫存於本地</div>}
+    const handleDeleteExpense = async (id) => {
+      if(!confirm("確定刪除？")) return;
+      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'expenses', id));
+    };
 
-                        {/* 主要內容區 */}
-                        <main className="max-w-md mx-auto h-full">
-                            {activeTab === 'dashboard' && <DashboardView itinerary={itinerary} />}
-                            
-                            {activeTab === 'itinerary' && (
-                                <>
-                                    {viewMode === 'grid' ? (
-                                        <CalendarGridView itinerary={itinerary} onSelectDay={(day) => { setSelectedDay(day); setViewMode('detail'); }} />
-                                    ) : (
-                                        <DayDetailView day={selectedDay} onBack={() => setViewMode('grid')} onSelectActivity={setSelectedActivity} />
-                                    )}
-                                </>
-                            )}
+    // Calculate Balances
+    const balances = useMemo(() => {
+      let jpy = 0; // Positive means User1 (Little P) paid more.
+      let twd = 0;
 
-                            {activeTab === 'expenses' && <SharedListView title="分帳助手" icon="Wallet" items={expenses} onItemAdd={actions.addExpense} onItemDelete={handleItemDelete} type="expenses" />}
-                            
-                            {activeTab === 'wishlist' && <SharedListView title="願望清單" icon="Heart" items={wishlist} onItemAdd={actions.addWish} onItemDelete={handleItemDelete} type="wishlist" />}
-                        </main>
-                        
-                        {/* 彈出視窗 (行程詳細) */}
-                        <ActivityBottomSheet 
-                            activity={selectedActivity}
-                            isOpen={!!selectedActivity}
-                            onClose={() => setSelectedActivity(null)}
-                            onSave={async (newAct) => {
-                                const newActs = selectedDay.activities.map(a => a.id === newAct.id ? newAct : a);
-                                await actions.updateDayActivities(selectedDay.id, newActs);
-                                setSelectedActivity(null);
-                            }}
-                            onDelete={async (actId) => {
-                                const newActs = selectedDay.activities.filter(a => a.id !== actId);
-                                await actions.updateDayActivities(selectedDay.id, newActs);
-                                setSelectedActivity(null);
-                            }}
-                        />
-
-                        <BottomNav activeTab={activeTab} onTabChange={(tab) => { setActiveTab(tab); if(tab !== 'itinerary') setViewMode('grid'); }} />
-                    </div>
-                </div>
-            );
+      expenses.forEach(ex => {
+        const val = ex.amount / 2; // Split equally
+        if (ex.currency === 'JPY') {
+          if (ex.payer === 'user1') jpy += val; // User1 paid full, so User2 owes half
+          else jpy -= val; // User2 paid full, so User1 owes half
+        } else {
+          if (ex.payer === 'user1') twd += val;
+          else twd -= val;
         }
+      });
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
-    </script>
-</body>
-</html>
+      return { jpy, twd };
+    }, [expenses]);
+
+    return (
+      <div className="p-4 pb-24">
+        <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-2xl p-6 text-white shadow-lg shadow-red-200 mb-6 relative overflow-hidden">
+          <Snowflake className="absolute -top-4 -right-4 text-white/20 w-32 h-32 animate-spin-slow" />
+          <h2 className="text-xl font-bold mb-4 flex items-center gap-2"><Wallet /> 結算中心</h2>
+          
+          <div className="grid grid-cols-2 gap-4">
+             <div className="bg-white/10 backdrop-blur rounded-xl p-4">
+               <p className="text-xs opacity-80 mb-1">日幣結算 (JPY)</p>
+               <p className="text-2xl font-bold">¥ {Math.abs(balances.jpy).toLocaleString()}</p>
+               <p className="text-xs mt-1">
+                 {balances.jpy === 0 ? '目前平手' : (balances.jpy > 0 ? '百涵 需給 小批' : '小批 需給 百涵')}
+               </p>
+             </div>
+             <div className="bg-white/10 backdrop-blur rounded-xl p-4">
+               <p className="text-xs opacity-80 mb-1">台幣結算 (TWD)</p>
+               <p className="text-2xl font-bold">$ {Math.abs(balances.twd).toLocaleString()}</p>
+               <p className="text-xs mt-1">
+                 {balances.twd === 0 ? '目前平手' : (balances.twd > 0 ? '百涵 需給 小批' : '小批 需給 百涵')}
+               </p>
+             </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 mb-6">
+          <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
+             <Plus size={16} className="text-red-500" /> 新增花費
+          </h3>
+          <div className="space-y-3">
+             <div className="flex gap-2">
+                {USERS.map(u => (
+                  <button
+                    key={u.id}
+                    onClick={() => setPayer(u.id)}
+                    className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${payer === u.id ? 'bg-red-500 text-white' : 'bg-gray-100 text-gray-600'}`}
+                  >
+                    {u.name} 先付
+                  </button>
+                ))}
+             </div>
+             <div className="flex gap-2">
+                <input 
+                  type="text" 
+                  placeholder="消費項目" 
+                  value={desc} 
+                  onChange={(e) => setDesc(e.target.value)}
+                  className="flex-[2] bg-gray-50 border-none rounded-lg px-4 py-2 focus:ring-2 focus:ring-red-200"
+                />
+                <select 
+                  value={currency} 
+                  onChange={(e) => setCurrency(e.target.value)}
+                  className="flex-1 bg-gray-50 border-none rounded-lg px-2 py-2 text-sm font-medium text-gray-600"
+                >
+                  <option value="JPY">JPY</option>
+                  <option value="TWD">TWD</option>
+                </select>
+             </div>
+             <div className="flex gap-2">
+                <input 
+                  type="number" 
+                  placeholder="金額" 
+                  value={amount} 
+                  onChange={(e) => setAmount(e.target.value)}
+                  className="flex-1 bg-gray-50 border-none rounded-lg px-4 py-2 text-lg font-bold text-gray-800 focus:ring-2 focus:ring-red-200"
+                />
+                <button 
+                  onClick={handleAddExpense}
+                  className="w-12 h-12 flex items-center justify-center bg-red-500 text-white rounded-lg shadow-md hover:bg-red-600 active:scale-95 transition-all"
+                >
+                  <Plus />
+                </button>
+             </div>
+          </div>
+        </div>
+
+        <div className="space-y-3">
+           <h3 className="font-bold text-gray-800 px-1">最近紀錄</h3>
+           {expenses.map(ex => (
+             <div key={ex.id} className="flex items-center justify-between bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
+                <div className="flex items-center gap-3">
+                   <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold ${ex.payer === 'user1' ? 'bg-blue-100 text-blue-600' : 'bg-purple-100 text-purple-600'}`}>
+                     {ex.payer === 'user1' ? '批' : '涵'}
+                   </div>
+                   <div>
+                     <p className="font-medium text-gray-800">{ex.description}</p>
+                     <p className="text-xs text-gray-500">{ex.currency === 'JPY' ? '日幣' : '台幣'}</p>
+                   </div>
+                </div>
+                <div className="text-right">
+                   <p className="font-bold text-gray-800">{ex.currency === 'JPY' ? '¥' : '$'} {ex.amount}</p>
+                   <button onClick={() => handleDeleteExpense(ex.id)} className="text-xs text-red-400 hover:text-red-600 mt-1">刪除</button>
+                </div>
+             </div>
+           ))}
+        </div>
+      </div>
+    );
+  };
+
+  const WishlistView = () => {
+    const [newItem, setNewItem] = useState('');
+    const [newLoc, setNewLoc] = useState('');
+
+    const handleAddWish = async () => {
+      if(!newItem) return;
+      await setDoc(doc(collection(db, 'artifacts', appId, 'public', 'data', 'wishes')), {
+        item: newItem,
+        location: newLoc,
+        checked: false,
+        createdAt: serverTimestamp()
+      });
+      setNewItem('');
+      setNewLoc('');
+    };
+
+    const toggleCheck = async (wish) => {
+      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'wishes', wish.id), {
+        checked: !wish.checked
+      });
+    };
+
+    const deleteWish = async (id) => {
+      if(!confirm("刪除此願望?")) return;
+      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'wishes', id));
+    };
+
+    return (
+      <div className="p-4 pb-24">
+        <div className="bg-red-500 rounded-2xl p-6 text-white shadow-lg shadow-red-200 mb-6 flex flex-col items-center justify-center text-center relative overflow-hidden">
+           <div className="absolute top-0 left-0 w-full h-full opacity-10 bg-[radial-gradient(circle,_var(--tw-gradient-stops))] from-white to-transparent scale-150"></div>
+           <ShoppingBag size={48} className="mb-2 relative z-10" />
+           <h2 className="text-2xl font-bold relative z-10">購物 & 美食願望清單</h2>
+           <p className="text-red-100 text-sm relative z-10">Don't forget to buy!</p>
+        </div>
+
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-3 flex gap-2 mb-6">
+           <div className="flex-1 space-y-2">
+             <input 
+               className="w-full bg-gray-50 border-none rounded-lg px-3 py-2 text-sm"
+               placeholder="想買什麼 / 想吃什麼"
+               value={newItem}
+               onChange={(e) => setNewItem(e.target.value)}
+             />
+             <input 
+               className="w-full bg-gray-50 border-none rounded-lg px-3 py-2 text-sm"
+               placeholder="地點 (選填)"
+               value={newLoc}
+               onChange={(e) => setNewLoc(e.target.value)}
+             />
+           </div>
+           <button 
+             onClick={handleAddWish}
+             className="w-16 bg-red-500 text-white rounded-lg flex items-center justify-center hover:bg-red-600 transition-colors"
+           >
+             <Plus />
+           </button>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3">
+           {wishes.map(wish => (
+             <div key={wish.id} className={`flex items-center gap-3 p-4 rounded-xl border transition-all ${wish.checked ? 'bg-gray-50 border-gray-100 opacity-60' : 'bg-white border-red-100 shadow-sm'}`}>
+                <button 
+                  onClick={() => toggleCheck(wish)}
+                  className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors ${wish.checked ? 'bg-red-500 border-red-500 text-white' : 'border-gray-300 hover:border-red-400'}`}
+                >
+                  {wish.checked && <Check size={14} />}
+                </button>
+                <div className="flex-1">
+                   <p className={`font-medium text-gray-800 ${wish.checked ? 'line-through decoration-red-500' : ''}`}>{wish.item}</p>
+                   {wish.location && (
+                     <p className="text-xs text-gray-500 flex items-center gap-1">
+                       <MapPin size={10} /> {wish.location}
+                     </p>
+                   )}
+                </div>
+                <button onClick={() => deleteWish(wish.id)} className="text-gray-300 hover:text-red-500">
+                  <X size={16} />
+                </button>
+             </div>
+           ))}
+        </div>
+      </div>
+    );
+  };
+
+  if (loading) return (
+    <div className="h-screen w-full flex flex-col items-center justify-center bg-red-50 text-red-500">
+      <Snowflake className="animate-spin-slow w-12 h-12 mb-4" />
+      <p className="font-medium animate-pulse">載入行程中...</p>
+    </div>
+  );
+
+  return (
+    <div className="min-h-screen bg-gray-50 font-sans text-gray-900 overflow-x-hidden">
+      {/* Background Decor */}
+      <Snowfall />
+      
+      {/* View Container */}
+      <div className="max-w-md mx-auto min-h-screen bg-white shadow-2xl relative z-10">
+        
+        {/* Header */}
+        <header className="bg-red-600 text-white pt-10 pb-4 px-6 rounded-b-[2rem] shadow-lg mb-2 relative overflow-hidden">
+           <div className="absolute top-0 left-0 w-full h-full opacity-20 pointer-events-none">
+              <Snowflake className="absolute top-2 left-4 w-8 h-8" />
+              <Snowflake className="absolute bottom-2 right-10 w-12 h-12" />
+              <Snowflake className="absolute top-8 right-4 w-6 h-6" />
+           </div>
+           <div className="relative z-10 flex justify-between items-center">
+             <div>
+                <h1 className="text-2xl font-bold tracking-tight">Tokyo & Sendai</h1>
+                <p className="text-red-100 text-sm">Christmas Trip 2025</p>
+             </div>
+             <div className="bg-white/20 p-2 rounded-full backdrop-blur-sm">
+                <Snowflake size={24} className="text-white" />
+             </div>
+           </div>
+        </header>
+
+        {/* Content Area */}
+        <main className="min-h-[calc(100vh-180px)]">
+           {activeTab === 'itinerary' && <ItineraryView />}
+           {activeTab === 'split' && <SplitBillView />}
+           {activeTab === 'wish' && <WishlistView />}
+        </main>
+
+        {/* Bottom Navigation */}
+        <nav className="fixed bottom-0 left-0 w-full z-50">
+           <div className="max-w-md mx-auto bg-white border-t border-gray-100 pb-safe pt-2 px-6 flex justify-between items-center shadow-[0_-4px_20px_rgba(0,0,0,0.05)]">
+              <button 
+                onClick={() => setActiveTab('itinerary')}
+                className={`flex flex-col items-center gap-1 p-2 rounded-xl transition-all ${activeTab === 'itinerary' ? 'text-red-600 scale-110' : 'text-gray-400 hover:text-gray-600'}`}
+              >
+                <Calendar size={24} strokeWidth={activeTab === 'itinerary' ? 2.5 : 2} />
+                <span className="text-[10px] font-medium">行程</span>
+              </button>
+              
+              <button 
+                onClick={() => setActiveTab('split')}
+                className={`flex flex-col items-center gap-1 p-2 rounded-xl transition-all ${activeTab === 'split' ? 'text-red-600 scale-110' : 'text-gray-400 hover:text-gray-600'}`}
+              >
+                <Users size={24} strokeWidth={activeTab === 'split' ? 2.5 : 2} />
+                <span className="text-[10px] font-medium">分帳</span>
+              </button>
+              
+              <button 
+                onClick={() => setActiveTab('wish')}
+                className={`flex flex-col items-center gap-1 p-2 rounded-xl transition-all ${activeTab === 'wish' ? 'text-red-600 scale-110' : 'text-gray-400 hover:text-gray-600'}`}
+              >
+                <ShoppingBag size={24} strokeWidth={activeTab === 'wish' ? 2.5 : 2} />
+                <span className="text-[10px] font-medium">願望</span>
+              </button>
+           </div>
+        </nav>
+      </div>
+
+      <style>{`
+        .hide-scrollbar::-webkit-scrollbar {
+          display: none;
+        }
+        .hide-scrollbar {
+          -ms-overflow-style: none;
+          scrollbar-width: none;
+        }
+        @keyframes fall {
+          0% { transform: translateY(-10vh) translateX(-10px) rotate(0deg); opacity: 0.8; }
+          100% { transform: translateY(110vh) translateX(10px) rotate(360deg); opacity: 0; }
+        }
+        @keyframes spin-slow {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+        .animate-fall {
+          animation-name: fall;
+          animation-timing-function: linear;
+          animation-iteration-count: infinite;
+        }
+        .animate-spin-slow {
+          animation: spin-slow 10s linear infinite;
+        }
+      `}</style>
+    </div>
+  );
+}
