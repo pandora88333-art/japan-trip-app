@@ -1,180 +1,642 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
-import { getFirestore, collection, doc, setDoc, onSnapshot, deleteDoc, updateDoc, query, orderBy, serverTimestamp, writeBatch } from 'firebase/firestore';
 import { 
-  Plane, Train, MapPin, Utensils, Bed, 
-  Plus, Trash2, Edit2, Check, X, 
-  Snowflake, Calendar, CloudSnow, Sun, CloudRain,
-  Users, Wallet, ShoppingBag, ArrowLeft, ExternalLink
+  getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy, serverTimestamp 
+} from 'firebase/firestore';
+import { 
+  Calendar, CreditCard, Gift, Plane, Train, MapPin, Coffee, Bed, 
+  Trash2, Edit2, Check, Plus, ExternalLink, CloudRain, Thermometer, User, Snowflake
 } from 'lucide-react';
 
-// --- Firebase Configuration ---
+// --- Firebase Configuration & Init ---
 const firebaseConfig = JSON.parse(__firebase_config);
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
-// --- Mock Data for Initial State (from PDF) ---
-const INITIAL_ITINERARY = [
-  {
-    day: 1, date: '12/15', location: 'Tokyo',
-    items: [
-      { type: 'flight', title: '去程航班 CI 0106', time: '16:25 - 20:30', location: 'TPE(T2) → NRT(T2)', note: '中華航空' },
-      { type: 'transport', title: 'Skyliner 機場快線', time: '21:00', location: '成田機場 → 京成上野', note: '車程41分鐘，至京成上野站' },
-      { type: 'transport', title: 'JR 山手線', time: '22:00', location: '上野 → 秋葉原', note: '約4分鐘' },
-      { type: 'accommodation', title: 'MYSTAYS 御茶之水', time: '22:30', location: '東京都千代田區神田淡路町2-10-6', note: 'Check-in' },
-    ]
-  },
-  {
-    day: 2, date: '12/16', location: 'Tokyo',
-    items: [
-      { type: 'transport', title: '前往皇居', time: '09:00', location: '御茶之水 → 東京站 → 皇居外苑', note: 'JR中央線 + 步行' },
-      { type: 'attraction', title: '皇居外苑 (二重橋)', time: '09:30', location: '皇居外苑', note: '二重橋前 → 行幸通' },
-      { type: 'food', title: '午餐: 東京一番街', time: '12:00', location: '東京站一番街', note: 'Jump Shop 逛街 +在此午餐' },
-      { type: 'transport', title: '前往淺草', time: '13:30', location: '東京 → 銀座 → 淺草', note: 'Metro丸之內線 + 銀座線' },
-      { type: 'attraction', title: '淺草寺 & 仲見世通', time: '14:00', location: '淺草寺', note: '雷門、文化觀光中心8F觀景台' },
-      { type: 'transport', title: '前往晴空塔', time: '16:30', location: '淺草 → 押上', note: '東武晴空塔線或步行' },
-      { type: 'attraction', title: '東京晴空塔', time: '17:00', location: 'Tokyo Skytree', note: '觀景台預約 15:30 (行程調整), Solamachi 商場' },
-      { type: 'food', title: '晚餐: 呼炉凪来', time: '19:30', location: '炉端とおでん 呼炉凪来 秋葉原店', note: '關東煮吃到飽' },
-      { type: 'attraction', title: '秋葉原逛街', time: '21:00', location: '秋葉原', note: 'Radio Kaikan, Animate' }
-    ]
-  },
-  {
-    day: 3, date: '12/17', location: 'Tokyo',
-    items: [
-      { type: 'transport', title: '前往原宿', time: '09:30', location: '御茶之水 → 代代木 → 原宿', note: 'JR中央線 + 山手線' },
-      { type: 'attraction', title: '原宿 & 表參道', time: '10:00', location: '竹下通', note: 'Kiddy Land, 逛街' },
-      { type: 'transport', title: '步行至澀谷', time: '12:30', location: '表參道 → 澀谷', note: '沿途逛精品街' },
-      { type: 'food', title: '午餐', time: '13:00', location: '澀谷', note: '布丁狗餐廳 / 牡蠣屋 / 蛋包飯' },
-      { type: 'attraction', title: '澀谷 SKY & 逛街', time: '14:20', location: 'Shibuya Sky', note: '預約 14:20, MODI, 十字路口, Donki' },
-      { type: 'transport', title: '前往池袋', time: '17:00', location: '新宿 → 池袋', note: 'JR山手線' },
-      { type: 'food', title: '晚餐: 文字燒', time: '18:00', location: '食べ飲み放題もんじゃ酒場 だしや 池袋東口店', note: '' },
-      { type: 'attraction', title: '池袋逛街', time: '19:30', location: '池袋 Sunshine City', note: 'Animate, Pokémon Center' },
-    ]
-  },
-  {
-    day: 4, date: '12/18', location: 'Yamagata',
-    items: [
-      { type: 'attraction', title: '御茶之水買滑雪用具', time: '09:00', location: '御茶之水樂器/體育用品街', note: '' },
-      { type: 'transport', title: '前往藏王溫泉', time: '11:00', location: '御茶之水 → 東京站 → 山形站 → 藏王溫泉', note: '山形新幹線 Tsubasa (約2.5hr) + 巴士' },
-      { type: 'accommodation', title: '高宮琉璃渡假酒店', time: '16:00', location: 'Zao Onsen Sandogawa 1118-7', note: 'Check-in' },
-    ]
-  },
-  {
-    day: 5, date: '12/19', location: 'Yamagata',
-    items: [
-      { type: 'attraction', title: 'SHIBA SKI 租裝備', time: '09:00', location: 'SHIBA SKI', note: '' },
-      { type: 'attraction', title: '滑雪課 (上午)', time: '11:00 - 13:30', location: '藏王溫泉滑雪場', note: '' },
-      { type: 'food', title: '午餐: Otochaya', time: '13:30', location: 'Otochaya', note: '音茶屋' },
-      { type: 'attraction', title: '滑雪課 (下午)', time: '14:30 - 17:00', location: '藏王溫泉滑雪場', note: '' },
-    ]
-  },
-  {
-    day: 6, date: '12/20', location: 'Sendai',
-    items: [
-      { type: 'transport', title: '前往藏王樹冰', time: '09:00', location: '飯店 → 藏王纜車', note: '步行或飯店接駁' },
-      { type: 'attraction', title: '藏王樹冰', time: '09:30', location: '藏王纜車山頂線', note: '欣賞樹冰奇景' },
-      { type: 'transport', title: '前往仙台', time: '13:00', location: '藏王溫泉 → 仙台站', note: '高速巴士 (約100分鐘)' },
-      { type: 'attraction', title: '一番町逛街', time: '15:30', location: '仙台一番町', note: '' },
-      { type: 'food', title: '晚餐', time: '18:00', location: '仙台市區', note: '牛舌料理' },
-      { type: 'accommodation', title: '仙台蒙特利酒店', time: '20:00', location: '仙台市青葉區中央4-1-8', note: 'Check-in' },
-    ]
-  },
-  {
-    day: 7, date: '12/21', location: 'Sendai',
-    items: [
-      { type: 'attraction', title: '銀山溫泉 & 狐狸村', time: '08:30', location: '仙台站集合', note: '一日遊套裝行程' },
-      { type: 'food', title: '晚餐: 仙台和牛', time: '19:00', location: '仙台市區', note: '享受高級燒肉' },
-    ]
-  },
-  {
-    day: 8, date: '12/22', location: 'Narita',
-    items: [
-      { type: 'attraction', title: '仙台市區觀光', time: '09:00', location: '瑞鳳殿, 仙台城跡, 大崎八幡宮', note: '搭乘盧普兒仙台觀光巴士' },
-      { type: 'transport', title: '前往成田', time: '14:00', location: '仙台 → 東京 → 成田', note: '新幹線 Yamabiko/Hayabusa 至東京，轉乘成田特快 NEX' },
-      { type: 'accommodation', title: 'MYSTAYS 成田精品酒店', time: '19:00', location: '成田市小山31', note: 'Check-in' },
-    ]
-  },
-  {
-    day: 9, date: '12/23', location: 'Narita',
-    items: [
-      { type: 'attraction', title: '成田山新勝寺', time: '10:00', location: '成田山新勝寺', note: '逛表參道' },
-      { type: 'flight', title: '回程航班 CI 0109', time: '17:30 - 22:45', location: 'NRT(T2) → TPE(T2)', note: '中華航空' },
-    ]
-  }
-];
+// --- Components ---
 
-const USERS = [
-  { id: 'user1', name: '小批' },
-  { id: 'user2', name: '百涵' }
-];
-
-// --- Helper Components ---
-
-const Snowfall = () => {
+// 飄雪背景特效
+const SnowEffect = () => {
   return (
     <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden" aria-hidden="true">
       {[...Array(20)].map((_, i) => (
         <div
           key={i}
-          className="absolute text-white/20 animate-fall"
+          className="absolute text-white/30 animate-fall"
           style={{
             left: `${Math.random() * 100}%`,
-            top: `-20px`,
+            top: `-${Math.random() * 20}%`,
+            fontSize: `${Math.random() * 1.5 + 0.5}rem`,
             animationDuration: `${Math.random() * 5 + 5}s`,
-            animationDelay: `${Math.random() * 5}s`,
-            fontSize: `${Math.random() * 20 + 10}px`
+            animationDelay: `${Math.random() * 5}s`
           }}
         >
-          <Snowflake />
+          ❄
         </div>
       ))}
+      <style>{`
+        @keyframes fall {
+          0% { transform: translateY(-10vh) rotate(0deg); opacity: 0; }
+          10% { opacity: 0.8; }
+          100% { transform: translateY(110vh) rotate(360deg); opacity: 0; }
+        }
+        .animate-fall { animation-name: fall; animation-timing-function: linear; animation-iteration-count: infinite; }
+      `}</style>
     </div>
   );
 };
 
-// --- Weather Widget ---
-const WeatherWidget = ({ location, date }) => {
-  // Mock logic based on location and winter dates
-  const isSnowy = location === 'Yamagata' || location === 'Zao';
-  const temp = isSnowy ? '-2°C' : '8°C';
-  const condition = isSnowy ? '大雪' : '晴時多雲';
-  const precip = isSnowy ? '80%' : '10%';
-  const Icon = isSnowy ? CloudSnow : (condition.includes('雨') ? CloudRain : Sun);
+// 頂部標題列
+const Header = () => (
+  <div className="bg-gradient-to-r from-red-600 to-red-700 text-white p-4 shadow-lg sticky top-0 z-50 flex items-center justify-center relative overflow-hidden">
+    <div className="absolute top-0 left-0 w-full h-full bg-[url('https://www.transparenttextures.com/patterns/snow.png')] opacity-30"></div>
+    <Snowflake className="w-5 h-5 mr-2 animate-pulse" />
+    <h1 className="text-xl font-bold tracking-wider">celebrating for leaving pwc</h1>
+    <Snowflake className="w-5 h-5 ml-2 animate-pulse" />
+  </div>
+);
+
+// 底部導航列
+const BottomNav = ({ activeTab, setActiveTab }) => {
+  const tabs = [
+    { id: 'itinerary', label: '行程', icon: Calendar },
+    { id: 'expenses', label: '分帳', icon: CreditCard },
+    { id: 'wishlist', label: '願望', icon: Gift },
+  ];
 
   return (
-    <div className="mx-4 mt-4 mb-2 p-3 bg-white/90 backdrop-blur-sm rounded-xl shadow-sm border border-red-100 flex items-center justify-between">
-      <div className="flex items-center gap-3">
-        <div className={`p-2 rounded-full ${isSnowy ? 'bg-blue-100 text-blue-600' : 'bg-orange-100 text-orange-500'}`}>
-          <Icon size={24} />
-        </div>
-        <div>
-          <p className="font-bold text-gray-800">{location === 'Yamagata' ? '山形/藏王' : (location === 'Sendai' ? '仙台' : '東京')}</p>
-          <p className="text-xs text-gray-500">{date} • {condition}</p>
-        </div>
-      </div>
-      <div className="text-right">
-        <p className="text-xl font-bold text-gray-800">{temp}</p>
-        <p className="text-xs text-blue-500">降雨 {precip}</p>
+    <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 pb-safe shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] z-50">
+      <div className="flex justify-around items-center h-16">
+        {tabs.map((tab) => {
+          const Icon = tab.icon;
+          const isActive = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex flex-col items-center justify-center w-full h-full transition-colors duration-200 ${
+                isActive ? 'text-red-600' : 'text-gray-400 hover:text-red-400'
+              }`}
+            >
+              <Icon className={`w-6 h-6 mb-1 ${isActive ? 'fill-current' : ''}`} strokeWidth={isActive ? 2.5 : 2} />
+              <span className="text-xs font-medium">{tab.label}</span>
+            </button>
+          );
+        })}
       </div>
     </div>
   );
 };
 
-// --- Main App Component ---
+// --- Helper Functions ---
+const formatCurrency = (amount, currency) => {
+  return new Intl.NumberFormat('zh-TW', { 
+    style: 'currency', 
+    currency: currency, 
+    minimumFractionDigits: 0 
+  }).format(amount);
+};
 
+const openMap = (location) => {
+  if (!location) return;
+  const query = encodeURIComponent(location);
+  window.open(`https://www.google.com/maps/search/?api=1&query=${query}`, '_blank');
+};
+
+const openWeather = (location) => {
+    if (!location) return;
+    const query = encodeURIComponent(`${location} weather`);
+    window.open(`https://www.google.com/search?q=${query}`, '_blank');
+}
+
+// --- Tab: Itinerary (行程) ---
+const ItineraryTab = ({ db, userId }) => {
+  const [days, setDays] = useState([]); // 實際是從資料庫動態抓取的日期列表
+  const [selectedDate, setSelectedDate] = useState('');
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [editingItem, setEditingItem] = useState(null); // ID of item being edited
+  const [isAdding, setIsAdding] = useState(false);
+
+  // 用於新增/編輯的 Form State
+  const [formData, setFormData] = useState({
+    type: 'attraction', time: '10:00', title: '', content: '', location: '', date: ''
+  });
+
+  // 取得行程資料
+  useEffect(() => {
+    const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'itinerary'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      
+      // 整理出不重複的日期並排序
+      const uniqueDates = [...new Set(docs.map(d => d.date))].sort();
+      setDays(uniqueDates);
+      
+      // 如果沒有選中日期且有資料，預設選第一天
+      if (!selectedDate && uniqueDates.length > 0) {
+        setSelectedDate(uniqueDates[0]);
+      } else if (uniqueDates.length > 0 && !uniqueDates.includes(selectedDate)) {
+         // 如果選中的日期被刪光了，跳回第一天
+         setSelectedDate(uniqueDates[0]);
+      }
+
+      setItems(docs);
+      setLoading(false);
+    });
+    return () => unsubscribe();
+  }, [db, selectedDate]);
+
+  // 依日期過濾並排序當日行程
+  const currentItems = useMemo(() => {
+    if (!selectedDate) return [];
+    return items
+      .filter(item => item.date === selectedDate)
+      .sort((a, b) => a.time.localeCompare(b.time));
+  }, [items, selectedDate]);
+
+  // 新增/更新資料
+  const handleSave = async () => {
+    if (!formData.title || !formData.date) return alert('標題和日期是必填的');
+    
+    const collectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'itinerary');
+    try {
+      if (editingItem) {
+        await updateDoc(doc(collectionRef, editingItem), formData);
+      } else {
+        await addDoc(collectionRef, formData);
+      }
+      setIsAdding(false);
+      setEditingItem(null);
+      // Reset form but keep date
+      setFormData(prev => ({ ...prev, title: '', content: '', location: '', time: '09:00', type: 'attraction' }));
+    } catch (e) {
+      console.error("Error saving: ", e);
+    }
+  };
+
+  const handleDelete = async (id) => {
+    if(confirm('確定要刪除這個行程嗎？')) {
+       await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'itinerary', id));
+    }
+  }
+
+  // 字卡樣式定義
+  const getTypeStyles = (type) => {
+    switch (type) {
+      case 'flight': return { color: 'bg-sky-50 border-sky-200', icon: Plane, label: '航班', text: 'text-sky-700' };
+      case 'transport': return { color: 'bg-indigo-50 border-indigo-200', icon: Train, label: '交通', text: 'text-indigo-700' };
+      case 'attraction': return { color: 'bg-red-50 border-red-200', icon: MapPin, label: '景點', text: 'text-red-700' };
+      case 'food': return { color: 'bg-orange-50 border-orange-200', icon: Coffee, label: '餐食', text: 'text-orange-700' };
+      case 'accommodation': return { color: 'bg-emerald-50 border-emerald-200', icon: Bed, label: '住宿', text: 'text-emerald-700' };
+      default: return { color: 'bg-gray-50 border-gray-200', icon: MapPin, label: '其他', text: 'text-gray-700' };
+    }
+  };
+
+  // 生成範本資料 (如果資料庫是空的)
+  const seedData = async () => {
+    const batch = [
+      // Day 1: 12/15
+      { date: '12/15 (日)', time: '16:25', type: 'flight', title: 'TPE -> NRT', content: 'CI 0106 中華航空\nTPE(T2) -> NRT(T2)', location: '桃園機場' },
+      { date: '12/15 (日)', time: '20:30', type: 'transport', title: '機場前往飯店', content: '1. SKYLINER: 成田T2 -> 京成上野 (41分)\n2. 步行至JR上野轉山手線 -> 秋葉原\n3. 步行至御茶之水', location: '成田機場' },
+      { date: '12/15 (日)', time: '22:00', type: 'accommodation', title: 'MYSTAYS 御茶之水', content: 'Check-in (會議中心)\n地址: 東京都千代田區神田淡路町2-10-6', location: 'HOTEL MYSTAYS Ochanomizu Conference Center' },
+
+      // Day 2: 12/16
+      { date: '12/16 (一)', time: '09:00', type: 'transport', title: '前往皇居', content: 'JR中央線: 御茶之水 -> 東京站\n步行至皇居外苑', location: '御茶之水站' },
+      { date: '12/16 (一)', time: '09:30', type: 'attraction', title: '皇居外苑 (二重橋)', content: '散步參觀', location: '皇居外苑' },
+      { date: '12/16 (一)', time: '11:00', type: 'food', title: '東京車站午餐', content: '東京一番街 Jump Shop / 拉麵街', location: '東京車站' },
+      { date: '12/16 (一)', time: '13:00', type: 'transport', title: '前往淺草', content: '丸之內線(東京->銀座) 轉 銀座線(銀座->淺草)', location: '東京車站' },
+      { date: '12/16 (一)', time: '13:30', type: 'attraction', title: '淺草寺 & 仲見世通', content: '雷門拍照、吃零食\n文化觀光中心8F看全景', location: '淺草寺' },
+      { date: '12/16 (一)', time: '15:30', type: 'attraction', title: '晴空塔 Skytree', content: '觀景台預約 15:30\nSolamachi 逛街 (寶可夢/Jump Shop)', location: '東京晴空塔' },
+      { date: '12/16 (一)', time: '18:30', type: 'food', title: '晚餐: 呼炉凪来', content: '炉端とおでん (關東煮/爐端燒)\n地址: 千代田區外神田1-15-18 6F', location: '呼炉凪来 秋葉原店' },
+      { date: '12/16 (一)', time: '20:00', type: 'attraction', title: '秋葉原巡禮', content: 'Radio Kaikan, Animate, Melonbooks', location: '秋葉原' },
+
+      // Day 3: 12/17
+      { date: '12/17 (二)', time: '09:30', type: 'attraction', title: '原宿 & 表參道', content: '竹下通、Kiddy Land\n午餐: 布丁狗餐廳/牡蠣屋', location: '原宿' },
+      { date: '12/17 (二)', time: '14:20', type: 'attraction', title: '澀谷 SKY', content: '預約 14:20\n逛 PARCO, Donki', location: 'SHIBUYA SKY' },
+      { date: '12/17 (二)', time: '18:00', type: 'food', title: '晚餐: 文字燒吃到飽', content: 'もんじゃ酒場 だしや 池袋東口店', location: '池袋' },
+      { date: '12/17 (二)', time: '19:30', type: 'attraction', title: '池袋逛街', content: 'Animate 本店, Sunshine City', location: '池袋' },
+
+      // Day 4: 12/18
+      { date: '12/18 (三)', time: '09:00', type: 'attraction', title: '御茶之水', content: '購買滑雪用具', location: '御茶之水' },
+      { date: '12/18 (三)', time: '11:00', type: 'transport', title: '前往藏王溫泉', content: '1. JR中央線 -> 東京站\n2. 山形新幹線 Tsubasa -> 山形站 (約2.5hr)\n3. 巴士 -> 藏王溫泉', location: '東京車站' },
+      { date: '12/18 (三)', time: '15:00', type: 'accommodation', title: '高宮琉璃渡假酒店', content: 'Check-in\n地址: 山形藏王溫泉三度川1118-7', location: 'Takamiya Rurikura Resort' },
+
+      // Day 5: 12/19
+      { date: '12/19 (四)', time: '09:00', type: 'attraction', title: 'SHIBA SKI', content: '租借裝備', location: 'Zao Onsen' },
+      { date: '12/19 (四)', time: '11:00', type: 'attraction', title: '滑雪課程 (上午)', content: '11:00 ~ 13:30', location: 'Zao Onsen Ski Resort' },
+      { date: '12/19 (四)', time: '13:30', type: 'food', title: '午餐: Otochaya', content: '音茶屋', location: 'Otochaya' },
+      { date: '12/19 (四)', time: '14:30', type: 'attraction', title: '滑雪課程 (下午)', content: '14:30 ~ 17:00', location: 'Zao Onsen Ski Resort' },
+
+      // Day 6: 12/20
+      { date: '12/20 (五)', time: '09:00', type: 'transport', title: '前往藏王樹冰', content: '搭乘藏王纜車 (Zao Ropeway)', location: 'Zao Ropeway' },
+      { date: '12/20 (五)', time: '10:00', type: 'attraction', title: '藏王樹冰', content: '參觀樹冰奇景', location: 'Zao Ropeway Summit Station' },
+      { date: '12/20 (五)', time: '14:00', type: 'transport', title: '前往仙台', content: '巴士 -> 山形站\nJR仙山線 -> 仙台站', location: 'Sendai Station' },
+      { date: '12/20 (五)', time: '16:00', type: 'attraction', title: '一番町逛街', content: '仙台市區逛街', location: 'Ichibancho' },
+      { date: '12/20 (五)', time: '18:00', type: 'accommodation', title: '仙台蒙特利酒店', content: 'Check-in', location: 'Hotel Monterey Sendai' },
+
+      // Day 7: 12/21
+      { date: '12/21 (六)', time: '08:30', type: 'attraction', title: '套裝行程集合', content: '銀山溫泉 & 藏王狐狸村', location: 'Sendai Station' },
+      { date: '12/21 (六)', time: '18:00', type: 'food', title: '晚餐: 仙台和牛', content: '享受和牛大餐', location: 'Sendai' },
+
+      // Day 8: 12/22
+      { date: '12/22 (日)', time: '10:00', type: 'attraction', title: '仙台市區觀光', content: '瑞鳳殿、城跡公園、八幡宮', location: 'Zuihoden' },
+      { date: '12/22 (日)', time: '15:00', type: 'transport', title: '前往成田', content: '新幹線 -> 上野/東京\nSkyliner/NEX -> 成田', location: 'Narita' },
+      { date: '12/22 (日)', time: '19:00', type: 'accommodation', title: 'MYSTAYS 成田精品酒店', content: 'Check-in', location: 'HOTEL MYSTAYS Narita Boutique' },
+
+      // Day 9: 12/23
+      { date: '12/23 (一)', time: '09:00', type: 'attraction', title: '成田山新勝寺', content: '參拜', location: 'Naritasan Shinshoji Temple' },
+      { date: '12/23 (一)', time: '17:30', type: 'flight', title: 'NRT -> TPE', content: 'CI 0109 中華航空\nNRT(T2) -> TPE(T2)', location: 'Narita Airport Terminal 2' },
+    ];
+    const ref = collection(db, 'artifacts', appId, 'public', 'data', 'itinerary');
+    for (const item of batch) {
+      await addDoc(ref, item);
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-full pb-20 relative z-10">
+      {/* Date Selector */}
+      <div className="bg-white/90 backdrop-blur shadow-sm p-2 flex overflow-x-auto space-x-2 sticky top-0 z-20 no-scrollbar">
+        {days.length > 0 ? days.map(day => (
+          <button
+            key={day}
+            onClick={() => { setSelectedDate(day); setIsAdding(false); setEditingItem(null); }}
+            className={`whitespace-nowrap px-4 py-2 rounded-full text-sm font-bold transition-all ${
+              selectedDate === day 
+                ? 'bg-red-600 text-white shadow-md transform scale-105' 
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            {day}
+          </button>
+        )) : (
+          <div className="w-full text-center py-2 text-sm text-gray-500">點擊右下角「+」新增第一天行程</div>
+        )}
+      </div>
+
+      {/* Weather Header (Mock/Editable) */}
+      {selectedDate && (
+        <div className="mx-4 mt-4 bg-blue-50/80 backdrop-blur rounded-xl p-3 flex items-center justify-between border border-blue-100 shadow-sm">
+           <div className="flex items-center text-blue-800">
+             <CloudRain className="w-5 h-5 mr-2" />
+             <span className="text-sm font-semibold mr-3">預報: 3°C ~ 8°C </span>
+             <span className="text-xs bg-blue-200 px-2 py-0.5 rounded text-blue-800">降雨 20%</span>
+           </div>
+           <button onClick={() => openWeather(currentItems[0]?.location || 'Tokyo')} className="text-xs text-blue-600 underline">查看詳情</button>
+        </div>
+      )}
+
+      {/* Content Area */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {loading ? <div className="text-center mt-10 text-gray-500">載入中...</div> : (
+          <>
+            {items.length === 0 && (
+                <div className="text-center mt-10">
+                    <p className="text-gray-500 mb-4">目前沒有行程</p>
+                    <button onClick={seedData} className="bg-green-600 text-white px-4 py-2 rounded-lg shadow">載入範本行程</button>
+                </div>
+            )}
+            
+            {currentItems.map(item => {
+              const style = getTypeStyles(item.type);
+              const Icon = style.icon;
+              return (
+                <div key={item.id} className={`relative group flex flex-col bg-white rounded-2xl shadow-sm border-l-4 ${style.color.replace('bg-', 'border-l-')} p-4 transition-transform active:scale-[0.99]`}>
+                   {/* Card Header */}
+                   <div className="flex justify-between items-start mb-2">
+                      <div className="flex items-center space-x-2">
+                        <div className={`p-1.5 rounded-lg ${style.color}`}>
+                           <Icon className={`w-5 h-5 ${style.text}`} />
+                        </div>
+                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${style.color} ${style.text}`}>
+                          {style.label}
+                        </span>
+                        <span className="text-lg font-bold text-gray-800 font-mono">{item.time}</span>
+                      </div>
+                      <div className="flex space-x-1">
+                          <button onClick={() => { setEditingItem(item.id); setFormData(item); setIsAdding(true); }} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"><Edit2 className="w-4 h-4" /></button>
+                          <button onClick={() => handleDelete(item.id)} className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"><Trash2 className="w-4 h-4" /></button>
+                      </div>
+                   </div>
+                   
+                   {/* Card Body */}
+                   <h3 className="text-lg font-bold text-gray-900 mb-1">{item.title}</h3>
+                   {item.content && <p className="text-gray-600 text-sm mb-3 leading-relaxed whitespace-pre-wrap">{item.content}</p>}
+                   
+                   {/* Card Footer: Location & Weather Link */}
+                   {item.location && (
+                     <div className="mt-auto pt-2 border-t border-gray-100 flex items-center justify-between">
+                        <button 
+                            onClick={() => openMap(item.location)}
+                            className="flex items-center text-red-600 text-sm font-medium hover:underline"
+                        >
+                            <MapPin className="w-4 h-4 mr-1" />
+                            {item.location}
+                        </button>
+                        <button onClick={() => openWeather(item.location)} className="text-gray-400 hover:text-blue-500">
+                             <Thermometer className="w-4 h-4" />
+                        </button>
+                     </div>
+                   )}
+                </div>
+              );
+            })}
+          </>
+        )}
+      </div>
+
+      {/* Add Button */}
+      <button 
+        onClick={() => { 
+            setEditingItem(null); 
+            setFormData(prev => ({...prev, date: selectedDate || '12/23 (一)', time: '09:00', title: '', content: '', location: ''})); 
+            setIsAdding(true); 
+        }}
+        className="fixed bottom-20 right-4 w-14 h-14 bg-red-600 text-white rounded-full shadow-xl flex items-center justify-center hover:bg-red-700 transition-colors z-30"
+      >
+        <Plus className="w-8 h-8" />
+      </button>
+
+      {/* Edit/Add Modal */}
+      {isAdding && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl p-6 animate-in fade-in zoom-in duration-200">
+            <h3 className="text-xl font-bold mb-4 text-gray-800">{editingItem ? '編輯行程' : '新增行程'}</h3>
+            <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1">
+               <div>
+                  <label className="block text-xs font-bold text-gray-500 mb-1">日期 (例如: 12/23 (一))</label>
+                  <input type="text" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} className="w-full border rounded-lg p-2 focus:ring-2 focus:ring-red-500 outline-none" placeholder="12/23 (一)" />
+               </div>
+               <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 mb-1">時間</label>
+                    <input type="time" value={formData.time} onChange={e => setFormData({...formData, time: e.target.value})} className="w-full border rounded-lg p-2 focus:ring-2 focus:ring-red-500 outline-none" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 mb-1">類型</label>
+                    <select value={formData.type} onChange={e => setFormData({...formData, type: e.target.value})} className="w-full border rounded-lg p-2 focus:ring-2 focus:ring-red-500 outline-none bg-white">
+                        <option value="flight">航班</option>
+                        <option value="transport">交通</option>
+                        <option value="attraction">景點</option>
+                        <option value="food">午餐/晚餐</option>
+                        <option value="accommodation">住宿</option>
+                    </select>
+                  </div>
+               </div>
+               <div>
+                  <label className="block text-xs font-bold text-gray-500 mb-1">標題</label>
+                  <input type="text" value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})} className="w-full border rounded-lg p-2 focus:ring-2 focus:ring-red-500 outline-none" placeholder="例如: 東京迪士尼" />
+               </div>
+               <div>
+                  <label className="block text-xs font-bold text-gray-500 mb-1">內容/備註</label>
+                  <textarea rows={3} value={formData.content} onChange={e => setFormData({...formData, content: e.target.value})} className="w-full border rounded-lg p-2 focus:ring-2 focus:ring-red-500 outline-none" placeholder="詳細內容..." />
+               </div>
+               <div>
+                  <label className="block text-xs font-bold text-gray-500 mb-1">地點 (自動連結 Google Map)</label>
+                  <input type="text" value={formData.location} onChange={e => setFormData({...formData, location: e.target.value})} className="w-full border rounded-lg p-2 focus:ring-2 focus:ring-red-500 outline-none" placeholder="輸入地點名稱" />
+               </div>
+            </div>
+            <div className="flex gap-3 mt-6">
+                <button onClick={() => setIsAdding(false)} className="flex-1 py-3 bg-gray-100 text-gray-600 rounded-xl font-bold">取消</button>
+                <button onClick={handleSave} className="flex-1 py-3 bg-red-600 text-white rounded-xl font-bold shadow-lg hover:bg-red-700">儲存</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// --- Tab: Expenses (分帳) ---
+const ExpenseTab = ({ db }) => {
+  const [expenses, setExpenses] = useState([]);
+  const [form, setForm] = useState({ payer: '小批', amount: '', currency: 'JPY', note: '' });
+
+  useEffect(() => {
+    const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'expenses'), orderBy('createdAt', 'desc'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+       setExpenses(snapshot.docs.map(d => ({id: d.id, ...d.data()})));
+    });
+    return () => unsubscribe();
+  }, [db]);
+
+  const addExpense = async (e) => {
+    e.preventDefault();
+    if (!form.amount) return;
+    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'expenses'), {
+      ...form,
+      amount: parseFloat(form.amount),
+      createdAt: serverTimestamp()
+    });
+    setForm({ ...form, amount: '', note: '' });
+  };
+  
+  const deleteExpense = async (id) => {
+      if(confirm("刪除這筆費用？")) {
+        await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'expenses', id));
+      }
+  }
+
+  // Calculate Summary
+  const summary = useMemo(() => {
+      const result = {
+          JPY: { '小批': 0, '百涵': 0 },
+          TWD: { '小批': 0, '百涵': 0 }
+      };
+      expenses.forEach(ex => {
+          if (result[ex.currency] && result[ex.currency][ex.payer] !== undefined) {
+              result[ex.currency][ex.payer] += ex.amount;
+          }
+      });
+      return result;
+  }, [expenses]);
+
+  const calculateDebt = (curr) => {
+      const p1 = summary[curr]['小批'];
+      const p2 = summary[curr]['百涵'];
+      const diff = p1 - p2;
+      if (diff === 0) return "平手！";
+      const debtor = diff > 0 ? '百涵' : '小批';
+      const creditor = diff > 0 ? '小批' : '百涵';
+      return `${debtor} 需給 ${creditor} ${formatCurrency(Math.abs(diff) / 2, curr)}`;
+  };
+
+  return (
+    <div className="flex flex-col h-full pb-20 p-4 space-y-6 relative z-10">
+       {/* Summary Cards */}
+       <div className="grid grid-cols-2 gap-4">
+          {['JPY', 'TWD'].map(curr => (
+              <div key={curr} className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+                  <h3 className="text-sm font-bold text-gray-500 mb-2 border-b pb-1">{curr === 'JPY' ? '日幣結算' : '台幣結算'}</h3>
+                  <div className="space-y-1 text-xs text-gray-600">
+                      <div className="flex justify-between"><span>小批付:</span> <span className="font-mono">{summary[curr]['小批']}</span></div>
+                      <div className="flex justify-between"><span>百涵付:</span> <span className="font-mono">{summary[curr]['百涵']}</span></div>
+                  </div>
+                  <div className="mt-3 text-xs font-bold text-red-600 bg-red-50 p-2 rounded-lg text-center">
+                      {calculateDebt(curr)}
+                  </div>
+              </div>
+          ))}
+       </div>
+
+       {/* Add Form */}
+       <form onSubmit={addExpense} className="bg-white p-4 rounded-2xl shadow-md border-t-4 border-green-600">
+           <div className="flex gap-2 mb-3">
+               {['小批', '百涵'].map(name => (
+                   <button 
+                    key={name} type="button" 
+                    onClick={() => setForm({...form, payer: name})}
+                    className={`flex-1 py-2 rounded-lg text-sm font-bold border ${form.payer === name ? 'bg-green-600 text-white border-green-600' : 'bg-white text-gray-500 border-gray-200'}`}
+                   >
+                       {name}
+                   </button>
+               ))}
+           </div>
+           <div className="flex gap-2 mb-3">
+               <input 
+                 type="number" placeholder="金額" value={form.amount} onChange={e => setForm({...form, amount: e.target.value})}
+                 className="flex-1 p-2 border rounded-lg outline-none focus:border-green-500"
+               />
+               <select 
+                 value={form.currency} onChange={e => setForm({...form, currency: e.target.value})}
+                 className="w-24 p-2 border rounded-lg outline-none bg-gray-50 font-mono"
+               >
+                   <option value="JPY">JPY</option>
+                   <option value="TWD">TWD</option>
+               </select>
+           </div>
+           <input 
+             type="text" placeholder="備註 (例如: 晚餐)" value={form.note} onChange={e => setForm({...form, note: e.target.value})}
+             className="w-full p-2 border rounded-lg outline-none mb-3 focus:border-green-500"
+           />
+           <button type="submit" className="w-full py-2 bg-green-600 text-white font-bold rounded-lg shadow hover:bg-green-700">新增記帳</button>
+       </form>
+
+       {/* List */}
+       <div className="flex-1 overflow-y-auto space-y-3">
+           {expenses.map(ex => (
+               <div key={ex.id} className="bg-white p-3 rounded-xl shadow-sm flex items-center justify-between">
+                   <div className="flex items-center space-x-3">
+                       <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white ${ex.payer === '小批' ? 'bg-blue-400' : 'bg-pink-400'}`}>
+                           {ex.payer[0]}
+                       </div>
+                       <div>
+                           <p className="font-bold text-gray-800">{ex.note || '未分類'}</p>
+                           <p className="text-xs text-gray-400">{ex.payer} 付款</p>
+                       </div>
+                   </div>
+                   <div className="flex items-center space-x-3">
+                       <span className="font-mono font-bold text-gray-700">
+                           {ex.currency === 'JPY' ? '¥' : '$'}{ex.amount}
+                       </span>
+                       <button onClick={() => deleteExpense(ex.id)} className="text-gray-300 hover:text-red-500"><Trash2 className="w-4 h-4" /></button>
+                   </div>
+               </div>
+           ))}
+       </div>
+    </div>
+  );
+};
+
+// --- Tab: Wishlist (願望) ---
+const WishlistTab = ({ db }) => {
+  const [wishes, setWishes] = useState([]);
+  const [newItem, setNewItem] = useState('');
+  const [newLoc, setNewLoc] = useState('');
+
+  useEffect(() => {
+    const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'wishlist'), orderBy('createdAt', 'desc'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+        setWishes(snapshot.docs.map(d => ({id: d.id, ...d.data()})));
+    });
+    return () => unsubscribe();
+  }, [db]);
+
+  const addWish = async (e) => {
+      e.preventDefault();
+      if (!newItem) return;
+      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'wishlist'), {
+          item: newItem,
+          location: newLoc,
+          completed: false,
+          createdAt: serverTimestamp()
+      });
+      setNewItem('');
+      setNewLoc('');
+  }
+
+  const toggleWish = async (id, currentStatus) => {
+      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'wishlist', id), { completed: !currentStatus });
+  }
+
+  const deleteWish = async (id) => {
+      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'wishlist', id));
+  }
+
+  return (
+    <div className="flex flex-col h-full pb-20 p-4 relative z-10">
+        <div className="bg-gradient-to-br from-yellow-50 to-orange-50 p-6 rounded-2xl shadow-inner border border-yellow-100 mb-6 text-center">
+            <h2 className="text-lg font-bold text-yellow-800 mb-1 flex items-center justify-center gap-2"><Gift className="w-5 h-5"/> Must Buy / Eat</h2>
+            <p className="text-xs text-yellow-600">別忘了買這些東西！</p>
+        </div>
+
+        <form onSubmit={addWish} className="mb-6">
+            <div className="flex gap-2 mb-2">
+                <input 
+                    type="text" placeholder="想買什麼/想吃什麼？" value={newItem} onChange={e => setNewItem(e.target.value)}
+                    className="flex-2 w-full p-3 rounded-xl border-none shadow-sm ring-1 ring-gray-200 focus:ring-2 focus:ring-yellow-400 outline-none"
+                />
+            </div>
+            <div className="flex gap-2">
+                <div className="relative flex-1">
+                    <MapPin className="w-4 h-4 absolute left-3 top-3.5 text-gray-400" />
+                    <input 
+                        type="text" placeholder="地點 (選填)" value={newLoc} onChange={e => setNewLoc(e.target.value)}
+                        className="w-full p-3 pl-9 rounded-xl border-none shadow-sm ring-1 ring-gray-200 focus:ring-2 focus:ring-yellow-400 outline-none"
+                    />
+                </div>
+                <button type="submit" className="bg-yellow-400 text-yellow-900 font-bold px-6 rounded-xl shadow hover:bg-yellow-500">
+                    <Plus className="w-6 h-6" />
+                </button>
+            </div>
+        </form>
+
+        <div className="space-y-3 overflow-y-auto">
+            {wishes.map(wish => (
+                <div key={wish.id} className={`p-4 rounded-xl flex items-center justify-between transition-all ${wish.completed ? 'bg-gray-100 opacity-60' : 'bg-white shadow-md'}`}>
+                   <div className="flex items-start gap-3 overflow-hidden">
+                       <button 
+                         onClick={() => toggleWish(wish.id, wish.completed)}
+                         className={`mt-1 w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${wish.completed ? 'bg-green-500 border-green-500 text-white' : 'border-gray-300 text-transparent'}`}
+                       >
+                           <Check className="w-4 h-4" />
+                       </button>
+                       <div>
+                           <p className={`font-bold text-gray-800 ${wish.completed ? 'line-through text-gray-500' : ''}`}>{wish.item}</p>
+                           {wish.location && (
+                               <button onClick={() => openMap(wish.location)} className="text-xs text-blue-500 flex items-center mt-1 hover:underline">
+                                   <MapPin className="w-3 h-3 mr-1"/> {wish.location}
+                               </button>
+                           )}
+                       </div>
+                   </div>
+                   <button onClick={() => deleteWish(wish.id)} className="text-gray-300 hover:text-red-500 p-2"><Trash2 className="w-4 h-4" /></button>
+                </div>
+            ))}
+        </div>
+    </div>
+  );
+};
+
+// --- Main App ---
 export default function App() {
   const [user, setUser] = useState(null);
   const [activeTab, setActiveTab] = useState('itinerary');
-  const [currentDay, setCurrentDay] = useState(1);
-  const [itinerary, setItinerary] = useState([]);
-  const [expenses, setExpenses] = useState([]);
-  const [wishes, setWishes] = useState([]);
-  const [loading, setLoading] = useState(true);
 
-  // Auth & Data Init
   useEffect(() => {
     const initAuth = async () => {
       if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
@@ -188,578 +650,20 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // Firestore Listeners
-  useEffect(() => {
-    if (!user) return;
-
-    // Itinerary Listener
-    const itineraryRef = collection(db, 'artifacts', appId, 'public', 'data', 'itinerary');
-    const unsubItinerary = onSnapshot(query(itineraryRef, orderBy('day')), (snapshot) => {
-      if (snapshot.empty) {
-        // Initialize if empty
-        const batch = writeBatch(db);
-        INITIAL_ITINERARY.forEach(day => {
-          const docRef = doc(collection(db, 'artifacts', appId, 'public', 'data', 'itinerary'));
-          batch.set(docRef, day);
-        });
-        batch.commit();
-      } else {
-        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        // Sort items by time roughly
-        setItinerary(data);
-      }
-      setLoading(false);
-    }, (err) => console.error("Itinerary Error:", err));
-
-    // Expenses Listener
-    const expensesRef = collection(db, 'artifacts', appId, 'public', 'data', 'expenses');
-    const unsubExpenses = onSnapshot(query(expensesRef, orderBy('createdAt', 'desc')), (snapshot) => {
-      setExpenses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    }, (err) => console.error("Expenses Error:", err));
-
-    // Wishes Listener
-    const wishesRef = collection(db, 'artifacts', appId, 'public', 'data', 'wishes');
-    const unsubWishes = onSnapshot(wishesRef, (snapshot) => {
-      setWishes(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    }, (err) => console.error("Wishes Error:", err));
-
-    return () => {
-      unsubItinerary();
-      unsubExpenses();
-      unsubWishes();
-    };
-  }, [user]);
-
-  // --- Views ---
-
-  const ItineraryView = () => {
-    const dayData = itinerary.find(d => d.day === currentDay);
-    
-    // Sort items by time string simple comparison
-    const sortedItems = dayData ? [...dayData.items].sort((a, b) => a.time.localeCompare(b.time)) : [];
-
-    const handleUpdateItem = async (dayId, itemIndex, newItem) => {
-      const dayDoc = itinerary.find(d => d.id === dayId);
-      // We need to find the item in the original unsorted array or trust the index if we render sorted?
-      // To be safe, let's identify by strict equality of properties or add an ID to items. 
-      // For this simple version, we will find the index in the original array that matches the item content.
-      // A better way for production is giving every item a unique ID.
-      // Here, let's just update the day's items array. 
-      
-      // Since we sorted for display, we must be careful. 
-      // Let's rely on the unsorted `dayData.items` for the index passed from the map if we map over `dayData.items` directly?
-      // No, let's map over `dayData.items` in render to keep indices stable for now.
-    };
-
-    // Simplified update logic: directly modifying the array in Firestore
-    // Note: In a real app, each item should have a UUID.
-    const updateDayItems = async (dayId, newItems) => {
-      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'itinerary', dayId), {
-        items: newItems
-      });
-    };
-
-    const handleAddItem = async (dayId) => {
-       const dayDoc = itinerary.find(d => d.id === dayId);
-       const newItem = {
-         type: 'attraction',
-         title: '新行程',
-         time: '12:00',
-         location: '地點',
-         note: '備註'
-       };
-       await updateDayItems(dayId, [...dayDoc.items, newItem]);
-    };
-
-    const getTypeStyles = (type) => {
-      switch (type) {
-        case 'flight': return 'bg-blue-50 border-blue-200 text-blue-800';
-        case 'transport': return 'bg-green-50 border-green-200 text-green-800';
-        case 'food': return 'bg-orange-50 border-orange-200 text-orange-800';
-        case 'accommodation': return 'bg-purple-50 border-purple-200 text-purple-800';
-        default: return 'bg-red-50 border-red-200 text-red-800'; // Attraction
-      }
-    };
-
-    const getTypeIcon = (type) => {
-      switch (type) {
-        case 'flight': return <Plane size={18} />;
-        case 'transport': return <Train size={18} />;
-        case 'food': return <Utensils size={18} />;
-        case 'accommodation': return <Bed size={18} />;
-        default: return <MapPin size={18} />;
-      }
-    };
-
-    return (
-      <div className="pb-24">
-        {/* Day Selector */}
-        <div className="sticky top-0 z-20 bg-white/95 backdrop-blur shadow-sm border-b border-gray-100 overflow-x-auto no-scrollbar py-3">
-          <div className="flex px-4 gap-3 min-w-max">
-            {itinerary.map((d) => (
-              <button
-                key={d.day}
-                onClick={() => setCurrentDay(d.day)}
-                className={`flex flex-col items-center justify-center w-14 h-14 rounded-2xl transition-all duration-200 ${
-                  currentDay === d.day 
-                    ? 'bg-gradient-to-br from-red-500 to-red-600 text-white shadow-lg shadow-red-200 scale-105' 
-                    : 'bg-gray-50 text-gray-400 hover:bg-gray-100'
-                }`}
-              >
-                <span className="text-[10px] font-medium opacity-80">Day</span>
-                <span className="text-lg font-bold leading-none">{d.day}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {dayData && (
-          <>
-            <WeatherWidget location={dayData.location} date={dayData.date} />
-            
-            <div className="px-4 space-y-4 mt-2">
-              <div className="flex justify-between items-end mb-2 px-1">
-                 <div>
-                    <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
-                       {dayData.date} 行程
-                    </h2>
-                    <p className="text-sm text-gray-500">
-                      {dayData.location === 'Tokyo' ? '東京' : dayData.location === 'Yamagata' ? '山形藏王' : dayData.location === 'Sendai' ? '仙台' : '成田'}
-                    </p>
-                 </div>
-                 <button onClick={() => handleAddItem(dayData.id)} className="text-red-500 text-sm font-medium flex items-center gap-1 bg-red-50 px-3 py-1.5 rounded-full hover:bg-red-100">
-                   <Plus size={14} /> 新增
-                 </button>
-              </div>
-
-              {dayData.items.map((item, idx) => (
-                <div key={idx} className={`relative group rounded-2xl border-l-4 p-4 shadow-sm bg-white transition-all ${getTypeStyles(item.type).replace('bg-', 'border-').split(' ')[1]}`}>
-                  <div className="flex justify-between items-start mb-2">
-                    <div className={`flex items-center gap-2 px-2 py-1 rounded-lg text-xs font-bold uppercase tracking-wider ${getTypeStyles(item.type)}`}>
-                       {getTypeIcon(item.type)}
-                       {item.type === 'food' ? '午餐/晚餐' : item.type === 'attraction' ? '景點' : item.type === 'flight' ? '航班' : item.type === 'accommodation' ? '住宿' : '交通'}
-                    </div>
-                    <div className="flex gap-2">
-                       <button 
-                         onClick={() => {
-                            const newTime = prompt('修改時間', item.time);
-                            if(newTime) {
-                                const newItems = [...dayData.items];
-                                newItems[idx] = { ...item, time: newTime };
-                                updateDayItems(dayData.id, newItems);
-                            }
-                         }}
-                         className="text-gray-400 hover:text-gray-600 p-1"
-                        >
-                         <Edit2 size={14} />
-                       </button>
-                       <button 
-                         onClick={() => {
-                             if(confirm("確定要刪除這個行程嗎？")) {
-                                const newItems = dayData.items.filter((_, i) => i !== idx);
-                                updateDayItems(dayData.id, newItems);
-                             }
-                         }}
-                         className="text-gray-400 hover:text-red-500 p-1"
-                        >
-                         <Trash2 size={14} />
-                       </button>
-                    </div>
-                  </div>
-
-                  <div className="pl-1">
-                    <h3 
-                      className="text-lg font-bold text-gray-800 mb-1 cursor-pointer hover:text-red-600 transition-colors"
-                      onClick={() => {
-                        const newTitle = prompt('修改標題', item.title);
-                        if(newTitle) {
-                             const newItems = [...dayData.items];
-                             newItems[idx] = { ...item, title: newTitle };
-                             updateDayItems(dayData.id, newItems);
-                        }
-                      }}
-                    >
-                      {item.title}
-                    </h3>
-                    
-                    <div className="flex items-center gap-2 text-sm text-gray-600 mb-2 font-mono bg-gray-50 inline-block px-2 py-0.5 rounded">
-                       <Calendar size={12} />
-                       {item.time}
-                    </div>
-
-                    <div className="text-sm text-gray-600 flex items-start gap-2 mb-3">
-                       <MapPin size={14} className="mt-0.5 shrink-0 text-gray-400" />
-                       <span 
-                         onClick={() => {
-                           const newLoc = prompt('修改地點', item.location);
-                           if(newLoc) {
-                               const newItems = [...dayData.items];
-                               newItems[idx] = { ...item, location: newLoc };
-                               updateDayItems(dayData.id, newItems);
-                           }
-                         }}
-                         className="cursor-pointer hover:underline decoration-dashed"
-                       >
-                         {item.location}
-                       </span>
-                    </div>
-
-                    {item.note && (
-                      <p 
-                        className="text-xs text-gray-500 bg-gray-50 p-2 rounded-lg"
-                        onClick={() => {
-                          const newNote = prompt('修改備註', item.note);
-                          if(newNote !== null) {
-                               const newItems = [...dayData.items];
-                               newItems[idx] = { ...item, note: newNote };
-                               updateDayItems(dayData.id, newItems);
-                          }
-                        }}
-                      >
-                        {item.note}
-                      </p>
-                    )}
-
-                    <button 
-                      onClick={() => window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(item.location + ' ' + item.title)}`, '_blank')}
-                      className="mt-3 w-full flex items-center justify-center gap-2 py-2 text-xs font-medium text-gray-500 border border-gray-100 rounded-lg hover:bg-gray-50 hover:text-red-500 transition-colors"
-                    >
-                      <MapPin size={14} />
-                      打開 Google Maps
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-      </div>
-    );
-  };
-
-  const SplitBillView = () => {
-    const [amount, setAmount] = useState('');
-    const [desc, setDesc] = useState('');
-    const [payer, setPayer] = useState('user1');
-    const [currency, setCurrency] = useState('JPY');
-
-    const handleAddExpense = async () => {
-      if (!amount || !desc) return;
-      await setDoc(doc(collection(db, 'artifacts', appId, 'public', 'data', 'expenses')), {
-        amount: parseFloat(amount),
-        description: desc,
-        payer,
-        currency,
-        createdAt: serverTimestamp()
-      });
-      setAmount('');
-      setDesc('');
-    };
-
-    const handleDeleteExpense = async (id) => {
-      if(!confirm("確定刪除？")) return;
-      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'expenses', id));
-    };
-
-    // Calculate Balances
-    const balances = useMemo(() => {
-      let jpy = 0; // Positive means User1 (Little P) paid more.
-      let twd = 0;
-
-      expenses.forEach(ex => {
-        const val = ex.amount / 2; // Split equally
-        if (ex.currency === 'JPY') {
-          if (ex.payer === 'user1') jpy += val; // User1 paid full, so User2 owes half
-          else jpy -= val; // User2 paid full, so User1 owes half
-        } else {
-          if (ex.payer === 'user1') twd += val;
-          else twd -= val;
-        }
-      });
-
-      return { jpy, twd };
-    }, [expenses]);
-
-    return (
-      <div className="p-4 pb-24">
-        <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-2xl p-6 text-white shadow-lg shadow-red-200 mb-6 relative overflow-hidden">
-          <Snowflake className="absolute -top-4 -right-4 text-white/20 w-32 h-32 animate-spin-slow" />
-          <h2 className="text-xl font-bold mb-4 flex items-center gap-2"><Wallet /> 結算中心</h2>
-          
-          <div className="grid grid-cols-2 gap-4">
-             <div className="bg-white/10 backdrop-blur rounded-xl p-4">
-               <p className="text-xs opacity-80 mb-1">日幣結算 (JPY)</p>
-               <p className="text-2xl font-bold">¥ {Math.abs(balances.jpy).toLocaleString()}</p>
-               <p className="text-xs mt-1">
-                 {balances.jpy === 0 ? '目前平手' : (balances.jpy > 0 ? '百涵 需給 小批' : '小批 需給 百涵')}
-               </p>
-             </div>
-             <div className="bg-white/10 backdrop-blur rounded-xl p-4">
-               <p className="text-xs opacity-80 mb-1">台幣結算 (TWD)</p>
-               <p className="text-2xl font-bold">$ {Math.abs(balances.twd).toLocaleString()}</p>
-               <p className="text-xs mt-1">
-                 {balances.twd === 0 ? '目前平手' : (balances.twd > 0 ? '百涵 需給 小批' : '小批 需給 百涵')}
-               </p>
-             </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 mb-6">
-          <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
-             <Plus size={16} className="text-red-500" /> 新增花費
-          </h3>
-          <div className="space-y-3">
-             <div className="flex gap-2">
-                {USERS.map(u => (
-                  <button
-                    key={u.id}
-                    onClick={() => setPayer(u.id)}
-                    className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${payer === u.id ? 'bg-red-500 text-white' : 'bg-gray-100 text-gray-600'}`}
-                  >
-                    {u.name} 先付
-                  </button>
-                ))}
-             </div>
-             <div className="flex gap-2">
-                <input 
-                  type="text" 
-                  placeholder="消費項目" 
-                  value={desc} 
-                  onChange={(e) => setDesc(e.target.value)}
-                  className="flex-[2] bg-gray-50 border-none rounded-lg px-4 py-2 focus:ring-2 focus:ring-red-200"
-                />
-                <select 
-                  value={currency} 
-                  onChange={(e) => setCurrency(e.target.value)}
-                  className="flex-1 bg-gray-50 border-none rounded-lg px-2 py-2 text-sm font-medium text-gray-600"
-                >
-                  <option value="JPY">JPY</option>
-                  <option value="TWD">TWD</option>
-                </select>
-             </div>
-             <div className="flex gap-2">
-                <input 
-                  type="number" 
-                  placeholder="金額" 
-                  value={amount} 
-                  onChange={(e) => setAmount(e.target.value)}
-                  className="flex-1 bg-gray-50 border-none rounded-lg px-4 py-2 text-lg font-bold text-gray-800 focus:ring-2 focus:ring-red-200"
-                />
-                <button 
-                  onClick={handleAddExpense}
-                  className="w-12 h-12 flex items-center justify-center bg-red-500 text-white rounded-lg shadow-md hover:bg-red-600 active:scale-95 transition-all"
-                >
-                  <Plus />
-                </button>
-             </div>
-          </div>
-        </div>
-
-        <div className="space-y-3">
-           <h3 className="font-bold text-gray-800 px-1">最近紀錄</h3>
-           {expenses.map(ex => (
-             <div key={ex.id} className="flex items-center justify-between bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
-                <div className="flex items-center gap-3">
-                   <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold ${ex.payer === 'user1' ? 'bg-blue-100 text-blue-600' : 'bg-purple-100 text-purple-600'}`}>
-                     {ex.payer === 'user1' ? '批' : '涵'}
-                   </div>
-                   <div>
-                     <p className="font-medium text-gray-800">{ex.description}</p>
-                     <p className="text-xs text-gray-500">{ex.currency === 'JPY' ? '日幣' : '台幣'}</p>
-                   </div>
-                </div>
-                <div className="text-right">
-                   <p className="font-bold text-gray-800">{ex.currency === 'JPY' ? '¥' : '$'} {ex.amount}</p>
-                   <button onClick={() => handleDeleteExpense(ex.id)} className="text-xs text-red-400 hover:text-red-600 mt-1">刪除</button>
-                </div>
-             </div>
-           ))}
-        </div>
-      </div>
-    );
-  };
-
-  const WishlistView = () => {
-    const [newItem, setNewItem] = useState('');
-    const [newLoc, setNewLoc] = useState('');
-
-    const handleAddWish = async () => {
-      if(!newItem) return;
-      await setDoc(doc(collection(db, 'artifacts', appId, 'public', 'data', 'wishes')), {
-        item: newItem,
-        location: newLoc,
-        checked: false,
-        createdAt: serverTimestamp()
-      });
-      setNewItem('');
-      setNewLoc('');
-    };
-
-    const toggleCheck = async (wish) => {
-      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'wishes', wish.id), {
-        checked: !wish.checked
-      });
-    };
-
-    const deleteWish = async (id) => {
-      if(!confirm("刪除此願望?")) return;
-      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'wishes', id));
-    };
-
-    return (
-      <div className="p-4 pb-24">
-        <div className="bg-red-500 rounded-2xl p-6 text-white shadow-lg shadow-red-200 mb-6 flex flex-col items-center justify-center text-center relative overflow-hidden">
-           <div className="absolute top-0 left-0 w-full h-full opacity-10 bg-[radial-gradient(circle,_var(--tw-gradient-stops))] from-white to-transparent scale-150"></div>
-           <ShoppingBag size={48} className="mb-2 relative z-10" />
-           <h2 className="text-2xl font-bold relative z-10">購物 & 美食願望清單</h2>
-           <p className="text-red-100 text-sm relative z-10">Don't forget to buy!</p>
-        </div>
-
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-3 flex gap-2 mb-6">
-           <div className="flex-1 space-y-2">
-             <input 
-               className="w-full bg-gray-50 border-none rounded-lg px-3 py-2 text-sm"
-               placeholder="想買什麼 / 想吃什麼"
-               value={newItem}
-               onChange={(e) => setNewItem(e.target.value)}
-             />
-             <input 
-               className="w-full bg-gray-50 border-none rounded-lg px-3 py-2 text-sm"
-               placeholder="地點 (選填)"
-               value={newLoc}
-               onChange={(e) => setNewLoc(e.target.value)}
-             />
-           </div>
-           <button 
-             onClick={handleAddWish}
-             className="w-16 bg-red-500 text-white rounded-lg flex items-center justify-center hover:bg-red-600 transition-colors"
-           >
-             <Plus />
-           </button>
-        </div>
-
-        <div className="grid grid-cols-1 gap-3">
-           {wishes.map(wish => (
-             <div key={wish.id} className={`flex items-center gap-3 p-4 rounded-xl border transition-all ${wish.checked ? 'bg-gray-50 border-gray-100 opacity-60' : 'bg-white border-red-100 shadow-sm'}`}>
-                <button 
-                  onClick={() => toggleCheck(wish)}
-                  className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors ${wish.checked ? 'bg-red-500 border-red-500 text-white' : 'border-gray-300 hover:border-red-400'}`}
-                >
-                  {wish.checked && <Check size={14} />}
-                </button>
-                <div className="flex-1">
-                   <p className={`font-medium text-gray-800 ${wish.checked ? 'line-through decoration-red-500' : ''}`}>{wish.item}</p>
-                   {wish.location && (
-                     <p className="text-xs text-gray-500 flex items-center gap-1">
-                       <MapPin size={10} /> {wish.location}
-                     </p>
-                   )}
-                </div>
-                <button onClick={() => deleteWish(wish.id)} className="text-gray-300 hover:text-red-500">
-                  <X size={16} />
-                </button>
-             </div>
-           ))}
-        </div>
-      </div>
-    );
-  };
-
-  if (loading) return (
-    <div className="h-screen w-full flex flex-col items-center justify-center bg-red-50 text-red-500">
-      <Snowflake className="animate-spin-slow w-12 h-12 mb-4" />
-      <p className="font-medium animate-pulse">載入行程中...</p>
-    </div>
-  );
+  if (!user) return <div className="flex items-center justify-center h-screen text-red-600 bg-red-50"><Snowflake className="animate-spin w-10 h-10 mr-2"/> 正在準備你的聖誕之旅...</div>;
 
   return (
-    <div className="min-h-screen bg-gray-50 font-sans text-gray-900 overflow-x-hidden">
-      {/* Background Decor */}
-      <Snowfall />
+    <div className="bg-slate-50 min-h-screen font-sans text-gray-800 pb-safe">
+      <SnowEffect />
+      <Header />
       
-      {/* View Container */}
-      <div className="max-w-md mx-auto min-h-screen bg-white shadow-2xl relative z-10">
-        
-        {/* Header */}
-        <header className="bg-red-600 text-white pt-10 pb-4 px-6 rounded-b-[2rem] shadow-lg mb-2 relative overflow-hidden">
-           <div className="absolute top-0 left-0 w-full h-full opacity-20 pointer-events-none">
-              <Snowflake className="absolute top-2 left-4 w-8 h-8" />
-              <Snowflake className="absolute bottom-2 right-10 w-12 h-12" />
-              <Snowflake className="absolute top-8 right-4 w-6 h-6" />
-           </div>
-           <div className="relative z-10 flex justify-between items-center">
-             <div>
-                <h1 className="text-2xl font-bold tracking-tight">Tokyo & Sendai</h1>
-                <p className="text-red-100 text-sm">Christmas Trip 2025</p>
-             </div>
-             <div className="bg-white/20 p-2 rounded-full backdrop-blur-sm">
-                <Snowflake size={24} className="text-white" />
-             </div>
-           </div>
-        </header>
+      <main className="h-[calc(100vh-110px)] overflow-hidden relative">
+        {activeTab === 'itinerary' && <ItineraryTab db={db} userId={user.uid} />}
+        {activeTab === 'expenses' && <ExpenseTab db={db} />}
+        {activeTab === 'wishlist' && <WishlistTab db={db} />}
+      </main>
 
-        {/* Content Area */}
-        <main className="min-h-[calc(100vh-180px)]">
-           {activeTab === 'itinerary' && <ItineraryView />}
-           {activeTab === 'split' && <SplitBillView />}
-           {activeTab === 'wish' && <WishlistView />}
-        </main>
-
-        {/* Bottom Navigation */}
-        <nav className="fixed bottom-0 left-0 w-full z-50">
-           <div className="max-w-md mx-auto bg-white border-t border-gray-100 pb-safe pt-2 px-6 flex justify-between items-center shadow-[0_-4px_20px_rgba(0,0,0,0.05)]">
-              <button 
-                onClick={() => setActiveTab('itinerary')}
-                className={`flex flex-col items-center gap-1 p-2 rounded-xl transition-all ${activeTab === 'itinerary' ? 'text-red-600 scale-110' : 'text-gray-400 hover:text-gray-600'}`}
-              >
-                <Calendar size={24} strokeWidth={activeTab === 'itinerary' ? 2.5 : 2} />
-                <span className="text-[10px] font-medium">行程</span>
-              </button>
-              
-              <button 
-                onClick={() => setActiveTab('split')}
-                className={`flex flex-col items-center gap-1 p-2 rounded-xl transition-all ${activeTab === 'split' ? 'text-red-600 scale-110' : 'text-gray-400 hover:text-gray-600'}`}
-              >
-                <Users size={24} strokeWidth={activeTab === 'split' ? 2.5 : 2} />
-                <span className="text-[10px] font-medium">分帳</span>
-              </button>
-              
-              <button 
-                onClick={() => setActiveTab('wish')}
-                className={`flex flex-col items-center gap-1 p-2 rounded-xl transition-all ${activeTab === 'wish' ? 'text-red-600 scale-110' : 'text-gray-400 hover:text-gray-600'}`}
-              >
-                <ShoppingBag size={24} strokeWidth={activeTab === 'wish' ? 2.5 : 2} />
-                <span className="text-[10px] font-medium">願望</span>
-              </button>
-           </div>
-        </nav>
-      </div>
-
-      <style>{`
-        .hide-scrollbar::-webkit-scrollbar {
-          display: none;
-        }
-        .hide-scrollbar {
-          -ms-overflow-style: none;
-          scrollbar-width: none;
-        }
-        @keyframes fall {
-          0% { transform: translateY(-10vh) translateX(-10px) rotate(0deg); opacity: 0.8; }
-          100% { transform: translateY(110vh) translateX(10px) rotate(360deg); opacity: 0; }
-        }
-        @keyframes spin-slow {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-        .animate-fall {
-          animation-name: fall;
-          animation-timing-function: linear;
-          animation-iteration-count: infinite;
-        }
-        .animate-spin-slow {
-          animation: spin-slow 10s linear infinite;
-        }
-      `}</style>
+      <BottomNav activeTab={activeTab} setActiveTab={setActiveTab} />
     </div>
   );
 }
